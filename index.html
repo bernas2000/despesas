@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Despesas da casa</title>
+<meta name="theme-color" content="#1f3864">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Despesas">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root {
+    --bg: #f4f6fb; --card: #ffffff; --ink: #1b2233; --muted: #6b7385; --line: #dfe3ee;
+    --accent: #1f3864; --accent-ink: #ffffff; --ok: #1d7a46; --err: #b3261e;
+    --card-glass: rgba(255,255,255,.93);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --card: #1c212c; --ink: #e8ebf3; --muted: #9aa3b8; --line: #2d3445;
+      --accent: #7fa6e8; --accent-ink: #0f1522; --ok: #62c58b; --err: #f2897f;
+      --card-glass: rgba(28,33,44,.92);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    font-size: 16px; line-height: 1.35; min-height: 100vh;
+    padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  /* Foto de fundo opcional: basta existir o ficheiro fundo.jpg ao lado do index.html */
+  body.hasbg {
+    background-image: linear-gradient(rgba(10,14,24,.38), rgba(10,14,24,.38)), var(--bgimg);
+    background-size: cover; background-position: center; background-attachment: fixed;
+  }
+  body.hasbg .card, body.hasbg nav { background: var(--card-glass); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  body.hasbg h1 { color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.5); }
+  .wrap { max-width: 520px; margin: 0 auto; }
+  header { padding: 18px 0 10px; }
+  h1 { margin: 0 0 12px; font-size: 22px; color: var(--accent); }
+  nav { display: grid; grid-template-columns: 1fr 1fr 1fr 52px; gap: 6px; background: var(--card); padding: 5px; border-radius: 14px; border: 1px solid var(--line); }
+  nav button { border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 600; padding: 10px 4px; border-radius: 10px; min-height: 44px; cursor: pointer; }
+  nav button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+  .tab { display: none; margin-top: 14px; }
+  .tab.active { display: block; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  .lbl { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin: 14px 0 6px; }
+  .lbl:first-child { margin-top: 0; }
+  .lbl small { font-weight: 400; }
+  input[type=text], input[type=date], input[type=url], input[type=password], input[inputmode], select {
+    width: 100%; min-height: 48px; padding: 10px 12px; font: inherit; font-size: 16px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 12px; appearance: none; -webkit-appearance: none;
+  }
+  select { background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 20px) 21px, calc(100% - 15px) 21px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 34px; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .amount { display: flex; align-items: center; gap: 8px; }
+  .amount input { font-size: 30px; font-weight: 700; min-height: 62px; text-align: right; }
+  .amount span { font-size: 28px; font-weight: 700; color: var(--muted); }
+  .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg label { flex: 1 1 0; min-width: 90px; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 46px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); font-weight: 600; font-size: 15px; cursor: pointer; }
+  .seg input:checked + span { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  details summary { cursor: pointer; color: var(--accent); font-weight: 600; padding: 12px 0 4px; }
+  .primary { width: 100%; min-height: 54px; border: 0; border-radius: 14px; background: var(--accent); color: var(--accent-ink); font: inherit; font-size: 17px; font-weight: 700; margin-top: 18px; cursor: pointer; }
+  .primary:disabled { opacity: .55; cursor: default; }
+  .ghost { border: 1px solid var(--line); background: transparent; color: var(--accent); font: inherit; font-weight: 600; border-radius: 12px; min-height: 44px; padding: 8px 14px; cursor: pointer; }
+  .big { font-size: 26px; font-weight: 800; color: var(--accent); }
+  .big.sm { font-size: 20px; font-weight: 700; }
+  .muted { color: var(--muted); font-size: 14px; }
+  ul.list { list-style: none; margin: 0; padding: 0; }
+  ul.list li { padding: 12px 0; border-top: 1px solid var(--line); }
+  ul.list li:first-child { border-top: 0; }
+  ul.list .t { display: flex; justify-content: space-between; gap: 10px; font-weight: 600; }
+  ul.list .s { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  ul.list .u { margin-top: 8px; }
+  .neg { color: var(--ok); }
+  .err-inline { color: var(--err); font-size: 13px; margin-top: 6px; }
+  .stack > * + * { margin-top: 12px; }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(18px + env(safe-area-inset-bottom)); max-width: 488px; margin: 0 auto; padding: 14px 16px; border-radius: 14px; background: var(--ok); color: #fff; font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.25); opacity: 0; transform: translateY(12px); pointer-events: none; transition: opacity .18s, transform .18s; z-index: 10; }
+  #toast.show { opacity: 1; transform: none; }
+  #toast.err { background: var(--err); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- LIGAR (primeira vez neste telemóvel) -->
+  <section id="setup" hidden>
+    <header><h1>Despesas da casa</h1></header>
+    <form id="sf" class="card" novalidate>
+      <p style="margin-top:0"><strong>Ligar este telemóvel</strong></p>
+      <p class="muted">Cola aqui o endereço do servidor e o código de acesso. Só é preciso fazer isto uma vez. Se recebeste um link de acesso, basta abri-lo e isto é preenchido sozinho.</p>
+      <label class="lbl" for="sUrl">Endereço do servidor</label>
+      <input id="sUrl" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec">
+      <label class="lbl" for="sTok">Código de acesso</label>
+      <input id="sTok" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="err-inline" id="sErr" role="alert"></div>
+      <button class="primary" id="sBtn" type="submit">Ligar</button>
+    </form>
+  </section>
+
+  <!-- APP -->
+  <div id="app" hidden>
+    <header>
+      <h1>Despesas da casa</h1>
+      <nav role="tablist" aria-label="Secções">
+        <button type="button" role="tab" data-tab="new" aria-selected="true">Nova</button>
+        <button type="button" role="tab" data-tab="ov" aria-selected="false">Resumo</button>
+        <button type="button" role="tab" data-tab="tr" aria-selected="false">Acertar</button>
+        <button type="button" role="tab" data-tab="set" aria-selected="false" aria-label="Definições">⚙</button>
+      </nav>
+    </header>
+
+    <section id="tab-new" class="tab active" role="tabpanel">
+      <form id="f" class="card" novalidate>
+        <label class="lbl" for="value">Valor</label>
+        <div class="amount"><input id="value" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" aria-label="Valor em euros"><span>€</span></div>
+
+        <label class="lbl" for="desc">Descrição</label>
+        <input id="desc" type="text" autocomplete="off" maxlength="200" placeholder="ex.: Fatura da luz, Sofá…">
+
+        <label class="lbl" for="cat">Categoria</label>
+        <select id="cat"><option value="">A carregar…</option></select>
+
+        <div class="lbl">Quem pagou</div>
+        <div class="seg" id="payer"></div>
+        <p class="hint" id="payerHint"></p>
+
+        <div class="lbl">Partilha</div>
+        <div class="seg" id="split"></div>
+
+        <label class="lbl" for="date">Data</label>
+        <input id="date" type="date">
+
+        <details>
+          <summary>Mais opções</summary>
+          <label class="lbl" for="room">Divisão da casa <small>(opcional)</small></label>
+          <select id="room"><option value="">— nenhuma —</option></select>
+          <label class="lbl" for="notes">Notas <small>(opcional)</small></label>
+          <input id="notes" type="text" autocomplete="off" maxlength="200">
+        </details>
+
+        <div class="err-inline" id="formErr" role="alert"></div>
+        <button class="primary" id="save" type="submit" disabled>Guardar despesa</button>
+      </form>
+    </section>
+
+    <section id="tab-ov" class="tab" role="tabpanel">
+      <div class="card">
+        <div class="muted">Acerto de contas</div>
+        <div class="big sm" id="acText">—</div>
+        <div class="big" id="acAmt" style="font-size:34px;white-space:nowrap"></div>
+        <div class="muted" style="margin-top:6px">Contas pagas pela conta conjunta não entram aqui.</div>
+        <button type="button" class="ghost" id="goTransfer" style="margin-top:12px" hidden>Registar transferência</button>
+      </div>
+      <div class="card">
+        <div class="muted" id="monthLbl">Este mês</div>
+        <div class="big" id="monthVal">—</div>
+      </div>
+      <div class="card">
+        <div class="muted" style="margin-bottom:6px">Últimos lançamentos</div>
+        <ul class="list" id="recent"><li class="muted">A carregar…</li></ul>
+      </div>
+    </section>
+
+    <section id="tab-tr" class="tab" role="tabpanel">
+      <form id="tf" class="card" novalidate>
+        <p class="muted" style="margin-top:0">Regista aqui quando um transfere dinheiro ao outro para acertar contas.</p>
+        <div class="lbl">Quem enviou</div>
+        <div class="seg" id="tFrom"></div>
+        <div class="hint" id="tTo"></div>
+        <label class="lbl" for="tValue">Valor</label>
+        <div class="amount"><input id="tValue" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" aria-label="Valor em euros"><span>€</span></div>
+        <label class="lbl" for="tDate">Data</label>
+        <input id="tDate" type="date">
+        <label class="lbl" for="tNote">Nota <small>(opcional)</small></label>
+        <input id="tNote" type="text" autocomplete="off" maxlength="200" value="Acerto de contas">
+        <div class="err-inline" id="tErr" role="alert"></div>
+        <button class="primary" id="tSave" type="submit" disabled>Registar transferência</button>
+      </form>
+    </section>
+
+    <section id="tab-set" class="tab" role="tabpanel">
+      <div class="card stack">
+        <div><strong>Este telemóvel está ligado ✓</strong></div>
+        <div class="muted">Para ligar outro telemóvel (por exemplo o da Susana), envia-lhe o link de acesso. O link contém o código, por isso envia-o só em privado.</div>
+        <button type="button" class="primary" id="shareBtn" style="margin-top:0">Partilhar acesso</button>
+        <div class="err-inline" id="setErr"></div>
+      </div>
+      <div class="card stack">
+        <div class="muted">Foto de fundo: coloca um ficheiro chamado <strong>fundo.jpg</strong> ao lado do index.html no GitHub e recarrega a app.</div>
+        <button type="button" class="ghost" id="logoutBtn">Desligar este telemóvel</button>
+      </div>
+    </section>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  var STORE = 'despesas.cfg.v1';
+  var URL_OK = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
+  var CFG = null, CONF = null, SUG = null, overviewDirty = true, saving = false;
+  var $ = function (s) { return document.querySelector(s); };
+
+  /* ---------- utilitários ---------- */
+  function money(v) { return Number(v).toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+  function parseNum(s) { return parseFloat(String(s).replace(/\s/g, '').replace(',', '.')); }
+  var toastTimer;
+  function toast(msg, isErr) {
+    var t = $('#toast'); t.textContent = msg; t.className = (isErr ? 'err ' : '') + 'show';
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.className = isErr ? 'err' : ''; }, 3800);
+  }
+  function errMsg(e) { return (e && e.message ? String(e.message) : 'Algo correu mal. Tenta outra vez.').replace(/^Error:\s*/, ''); }
+  function loadCfg() { try { return JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) { return null; } }
+  function saveCfg(c) { try { localStorage.setItem(STORE, JSON.stringify(c)); } catch (e) {} }
+  function clearCfg() { try { localStorage.removeItem(STORE); } catch (e) {} }
+
+  /* ---------- comunicação com o servidor ---------- */
+  function api(fn, args) {
+    return fetch(CFG.u, {
+      method: 'POST', redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: CFG.t, fn: fn, args: args || [] })
+    }).then(function (r) { return r.json(); }, function () {
+      throw new Error('Sem ligação ao servidor. Tens internet?');
+    }).then(function (r) {
+      if (r && r.ok) return r.v;
+      var e = new Error((r && r.error) || 'Erro do servidor.'); e.code = r && r.code; throw e;
+    });
+  }
+  function call(fn, args, ok, fail) {
+    api(fn, args).then(ok, function (e) {
+      if (e && e.code === 'AUTH') { showSetup('O código de acesso já não é válido. Pede um link novo.'); return; }
+      (fail || function (x) { toast(errMsg(x), true); })(e);
+    });
+  }
+
+  /* ---------- ligar / desligar ---------- */
+  function showSetup(msg) {
+    CFG = null; clearCfg();
+    $('#app').hidden = true; $('#setup').hidden = false;
+    $('#sErr').textContent = msg || '';
+  }
+  function showApp() { $('#setup').hidden = true; $('#app').hidden = false; }
+
+  $('#sf').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var u = $('#sUrl').value.trim(), t = $('#sTok').value.trim();
+    if (!URL_OK.test(u)) { $('#sErr').textContent = 'O endereço tem de começar por https://script.google.com/macros/s/ e acabar em /exec.'; return; }
+    if (!t) { $('#sErr').textContent = 'Cola o código de acesso.'; return; }
+    connect({ u: u, t: t }, true);
+  });
+
+  function connect(cfg, fromForm) {
+    CFG = cfg;
+    var btn = $('#sBtn'); btn.disabled = true; btn.textContent = 'A ligar…';
+    api('getInit', []).then(function (c) {
+      saveCfg(cfg); btn.disabled = false; btn.textContent = 'Ligar';
+      showApp(); initUI(c);
+    }, function (e) {
+      btn.disabled = false; btn.textContent = 'Ligar';
+      CFG = null; $('#app').hidden = true; $('#setup').hidden = false;
+      $('#sErr').textContent = e && e.code === 'AUTH' ? 'Código de acesso inválido.' : errMsg(e);
+    });
+  }
+
+  $('#logoutBtn').addEventListener('click', function () {
+    var b = $('#logoutBtn');
+    if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Toca outra vez para confirmar'; setTimeout(function () { delete b.dataset.armed; b.textContent = 'Desligar este telemóvel'; }, 4000); return; }
+    delete b.dataset.armed; b.textContent = 'Desligar este telemóvel';
+    showSetup('Telemóvel desligado.');
+  });
+
+  $('#shareBtn').addEventListener('click', function () {
+    if (!CFG) return;
+    var link = location.origin + location.pathname + '#u=' + encodeURIComponent(CFG.u) + '&t=' + encodeURIComponent(CFG.t);
+    var text = 'Abre este link no telemóvel para ligar a app das despesas da casa:';
+    if (navigator.share) {
+      navigator.share({ title: 'Despesas da casa', text: text, url: link }).catch(function () {});
+    } else if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(function () { toast('Link copiado ✓'); }, function () { $('#setErr').textContent = link; });
+    } else { $('#setErr').textContent = link; }
+  });
+
+  /* ---------- separadores ---------- */
+  function showTab(name) {
+    document.querySelectorAll('nav button').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === name)); });
+    document.querySelectorAll('.tab').forEach(function (s) { s.classList.toggle('active', s.id === 'tab-' + name); });
+    if (name === 'ov' && overviewDirty) loadOverview();
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll('nav button').forEach(function (b) { b.addEventListener('click', function () { showTab(b.dataset.tab); }); });
+
+  /* ---------- controlos ---------- */
+  function seg(el, name, options, selected, onChange) {
+    el.innerHTML = '';
+    options.forEach(function (o) {
+      var l = document.createElement('label'), i = document.createElement('input'), s = document.createElement('span');
+      i.type = 'radio'; i.name = name; i.value = o; i.checked = (o === selected);
+      s.textContent = o; l.appendChild(i); l.appendChild(s); el.appendChild(l);
+      i.addEventListener('change', function () { if (onChange) onChange(o); });
+    });
+  }
+  function segVal(el) { var c = el.querySelector('input:checked'); return c ? c.value : ''; }
+  function fillSelect(sel, items, first) {
+    sel.innerHTML = '';
+    var o0 = document.createElement('option'); o0.value = ''; o0.textContent = first; sel.appendChild(o0);
+    items.forEach(function (t) { var o = document.createElement('option'); o.value = t; o.textContent = t; sel.appendChild(o); });
+  }
+  function payerHint(v) {
+    $('#payerHint').textContent = v === CONF.joint ? 'Conta conjunta: nada para acertar entre vocês.' : 'Pago do bolso de ' + v + ': o outro deve a sua parte (se for partilhado).';
+  }
+  function resetChoices() {
+    seg($('#payer'), 'payer', [CONF.joint, CONF.p1, CONF.p2], CONF.joint, payerHint);
+    payerHint(CONF.joint);
+    seg($('#split'), 'split', [CONF.splitShared, CONF.splitP1, CONF.splitP2], CONF.splitShared);
+  }
+  function otherOf(n) { return n === CONF.p1 ? CONF.p2 : CONF.p1; }
+  function updateTo() { $('#tTo').textContent = 'Para: ' + otherOf(segVal($('#tFrom'))); }
+
+  function initUI(c) {
+    CONF = c;
+    fillSelect($('#cat'), c.cats, 'Escolhe a categoria…');
+    fillSelect($('#room'), c.rooms, '— nenhuma —');
+    resetChoices();
+    $('#date').value = c.today; $('#tDate').value = c.today;
+    seg($('#tFrom'), 'tfrom', [c.p1, c.p2], c.p2, updateTo);
+    updateTo();
+    $('#save').disabled = false; $('#tSave').disabled = false;
+    overviewDirty = true;
+    showTab('new');
+  }
+
+  /* ---------- guardar despesa ---------- */
+  $('#f').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (saving || !CONF) return;
+    var err = $('#formErr'); err.textContent = '';
+    var v = parseNum($('#value').value);
+    if (!isFinite(v) || v === 0) { err.textContent = 'Escreve o valor (usa negativo para um reembolso).'; $('#value').focus(); return; }
+    if (!$('#desc').value.trim()) { err.textContent = 'Escreve uma descrição.'; $('#desc').focus(); return; }
+    if (!$('#cat').value) { err.textContent = 'Escolhe a categoria.'; $('#cat').focus(); return; }
+    if (!$('#date').value) { err.textContent = 'Escolhe a data.'; return; }
+    var payload = {
+      date: $('#date').value, value: v, desc: $('#desc').value, category: $('#cat').value,
+      payer: segVal($('#payer')), split: segVal($('#split')), room: $('#room').value, notes: $('#notes').value
+    };
+    saving = true; $('#save').disabled = true; $('#save').textContent = 'A guardar…';
+    call('addExpense', [payload], function (r) {
+      saving = false; $('#save').disabled = false; $('#save').textContent = 'Guardar despesa';
+      toast('Guardado ✓  ' + r.summary);
+      overviewDirty = true;
+      $('#value').value = ''; $('#desc').value = ''; $('#cat').value = ''; $('#room').value = ''; $('#notes').value = '';
+      resetChoices(); $('#value').focus();
+    }, function (e) {
+      saving = false; $('#save').disabled = false; $('#save').textContent = 'Guardar despesa';
+      toast(errMsg(e), true);
+    });
+  });
+
+  /* ---------- resumo ---------- */
+  function loadOverview() {
+    call('getOverview', [], function (o) {
+      overviewDirty = false; SUG = o.acerto;
+      $('#acText').textContent = o.acerto.text || '—';
+      $('#acAmt').textContent = o.acerto.value > 0 ? o.acerto.amount : '';
+      $('#goTransfer').hidden = !(o.acerto.value > 0);
+      $('#monthLbl').textContent = 'Gasto em ' + o.monthLabel;
+      $('#monthVal').textContent = money(o.monthTotal);
+      var ul = $('#recent'); ul.innerHTML = '';
+      if (!o.recent.length) { ul.innerHTML = '<li class="muted">Ainda não há lançamentos.</li>'; return; }
+      o.recent.forEach(function (r, idx) {
+        var li = document.createElement('li');
+        var t = document.createElement('div'); t.className = 't';
+        var a = document.createElement('span'); a.textContent = r.desc;
+        var b = document.createElement('span'); b.textContent = money(r.value); if (r.value < 0) b.className = 'neg';
+        t.appendChild(a); t.appendChild(b);
+        var s = document.createElement('div'); s.className = 's';
+        var parts = [r.date, r.category];
+        if (r.room) parts.push(r.room);
+        parts.push(r.payer);
+        if (r.split !== CONF.splitShared) parts.push(r.split);
+        s.textContent = parts.join(' · ');
+        li.appendChild(t); li.appendChild(s);
+        if (idx === 0) {
+          var u = document.createElement('button'); u.type = 'button'; u.className = 'ghost u'; u.textContent = 'Anular este lançamento';
+          var armed = false, timer;
+          u.addEventListener('click', function () {
+            if (!armed) { armed = true; u.textContent = 'Toca outra vez para confirmar'; timer = setTimeout(function () { armed = false; u.textContent = 'Anular este lançamento'; }, 4000); return; }
+            clearTimeout(timer); u.disabled = true;
+            call('undoLast', [r.row], function () { toast('Lançamento anulado'); loadOverview(); }, function (e) { u.disabled = false; toast(errMsg(e), true); });
+          });
+          li.appendChild(u);
+        }
+        ul.appendChild(li);
+      });
+    }, function (e) { $('#recent').innerHTML = '<li class="muted">Não consegui carregar.</li>'; toast(errMsg(e), true); });
+  }
+
+  /* ---------- transferências ---------- */
+  $('#goTransfer').addEventListener('click', function () {
+    if (SUG && SUG.value > 0) {
+      $('#tFrom').querySelectorAll('input').forEach(function (r) { r.checked = (r.value === SUG.from); });
+      updateTo();
+      $('#tValue').value = String(SUG.value).replace('.', ',');
+    }
+    showTab('tr');
+  });
+  $('#tf').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (saving || !CONF) return;
+    var err = $('#tErr'); err.textContent = '';
+    var v = parseNum($('#tValue').value);
+    if (!isFinite(v) || v <= 0) { err.textContent = 'Escreve um valor maior que zero.'; $('#tValue').focus(); return; }
+    var from = segVal($('#tFrom'));
+    saving = true; $('#tSave').disabled = true;
+    call('addTransfer', [{ date: $('#tDate').value, from: from, to: otherOf(from), value: v, note: $('#tNote').value }], function (r) {
+      saving = false; $('#tSave').disabled = false;
+      toast('Registado ✓  ' + r.summary);
+      $('#tValue').value = ''; overviewDirty = true; showTab('ov');
+    }, function (e) { saving = false; $('#tSave').disabled = false; toast(errMsg(e), true); });
+  });
+
+  /* ---------- arranque ---------- */
+  // Link de acesso: …/#u=<servidor>&t=<código>. Guarda e limpa o endereço.
+  var h = location.hash.replace(/^#/, '');
+  if (h) {
+    var p = new URLSearchParams(h), u = p.get('u'), t = p.get('t');
+    if (u && t) {
+      history.replaceState(null, '', location.pathname + location.search);
+      if (URL_OK.test(u)) { saveCfg({ u: u, t: t }); }
+    }
+  }
+  var saved = loadCfg();
+  if (saved && saved.u && saved.t && URL_OK.test(saved.u)) {
+    CFG = saved; showApp();
+    api('getInit', []).then(initUI, function (e) {
+      if (e && e.code === 'AUTH') showSetup('O código de acesso já não é válido. Pede um link novo.');
+      else { toast(errMsg(e), true); $('#cat').innerHTML = '<option value="">Erro a carregar</option>'; }
+    });
+  } else {
+    showSetup('');
+  }
+
+  // Foto de fundo opcional
+  var im = new Image();
+  im.onload = function () { document.documentElement.style.setProperty('--bgimg', 'url(fundo.jpg)'); document.body.classList.add('hasbg'); };
+  im.src = 'fundo.jpg';
+
+  if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); }); }
+})();
+</script>
+</body>
+</html>
