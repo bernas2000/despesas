@@ -304,3 +304,11 @@ body.easy #tab-add form.card > button.primary[type=submit] { position: sticky; b
 .pvbar[hidden] { display: none; }
 .pvbar span { flex: 1; }
 .pvbar button { border: 2px solid currentColor; background: transparent; color: inherit; border-radius: 999px; padding: 8px 14px; font: inherit; font-size: 14px; font-weight: 700; min-height: 40px; cursor: pointer; }
+
+/* gráfico de linhas com pontos */
+.lc-svg { position: absolute; left: 0; top: 0; width: 100%; overflow: visible; pointer-events: none; }
+.lc-w { position: relative; display: block; }
+.pt { position: absolute; left: 50%; width: 10px; height: 10px; margin: 0 0 -5px -5px; border-radius: 50%; box-shadow: 0 0 0 2px var(--card); }
+.linechart .colb { cursor: default; touch-action: pan-y; }
+.linechart .colb:hover .lc-w, .linechart .colb[aria-pressed="true"] .lc-w, .linechart .colb:focus-visible .lc-w { background: linear-gradient(var(--axis), var(--axis)) center / 1px 100% no-repeat; }
+.linechart .colb[aria-pressed="true"] { background: transparent; }
