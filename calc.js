@@ -2,7 +2,10 @@
  *  - totais por categoria / grupo / divisão da casa e média mensal («só meses com gasto»)
  *  - acerto de contas: pago do bolso + parte da conta conjunta − parte de cada um ± transferências
  *    (a conta conjunta é dos dois: pagar por ela não cria dívida, seja qual for o valor que cada um deposita)
- *  - orçamento: gasto corrente vs. o que entra por mês na conta conjunta, e indicadores de poupança
+ *  - gastos pessoais (categorias «pessoais», sempre pagos por e só de uma pessoa): ficam fora da casa e das dívidas
+ *  - orçamento: gasto corrente vs. o que entra por mês na conta conjunta
+ *  - por pessoa: ordenado médio (12 ou 14 pagamentos) − entrada na conjunta − casa paga do bolso − gastos pessoais = sobra
+ *  - saldo estimado da conta conjunta a partir de um saldo de referência
  * Também corre em Node (testes) para comparar com os valores do Excel. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -15,6 +18,13 @@
   var sum = function (list) { var t = 0; for (var i = 0; i < list.length; i++) t += list[i].v; return t; };
   // O Excel (SUMIFS) ignora maiúsculas/minúsculas; fazemos o mesmo.
   var same = function (a, b) { return !!b && String(a || '').toLowerCase() === String(b).toLowerCase(); };
+
+  /** Gasto pessoal: categoria pessoal e pago por uma das pessoas (sem pagador, conta como despesa da casa). */
+  function isPersonal(e, cfg) {
+    return !!(cfg && cfg.pcats && cfg.pcats.indexOf(e.c) >= 0 && (same(e.p, cfg.p1) || same(e.p, cfg.p2)));
+  }
+  function houseOf(list, cfg) { return cfg && cfg.pcats ? list.filter(function (e) { return !isPersonal(e, cfg); }) : list; }
+  function personalOf(list, cfg) { return cfg && cfg.pcats ? list.filter(function (e) { return isPersonal(e, cfg); }) : []; }
 
   /** Junta ano (y) e mês (m) a cada despesa. Linhas sem data ficam com y = 0 (só contam em «tudo»). */
   function prep(list) {
@@ -134,6 +144,7 @@
 
   /** Acerto de contas acumulado (todas as despesas e transferências). */
   function settle(exp, tr, cfg) {
+    exp = houseOf(exp, cfg);
     var total = sum(exp);
     var d1 = sum(exp.filter(function (e) { return same(e.p, cfg.p1); }));
     var d2 = sum(exp.filter(function (e) { return same(e.p, cfg.p2); }));
@@ -171,7 +182,7 @@
 
   /** Saldo de um mês (sem transferências), como a tabela «Mês a mês» do Excel. Positivo = pessoa 2 deve à pessoa 1. */
   function settleMonth(exp, cfg, year, m) {
-    var l = exp.filter(function (e) { return e.y === year && e.m === m; });
+    var l = houseOf(exp, cfg).filter(function (e) { return e.y === year && e.m === m; });
     var total = sum(l);
     var d1 = sum(l.filter(function (e) { return same(e.p, cfg.p1); }));
     var d2 = sum(l.filter(function (e) { return same(e.p, cfg.p2); }));
@@ -202,8 +213,10 @@
    */
   function budget(exp, bud, cfg, today) {
     bud = bud || {};
+    exp = houseOf(exp, cfg);
     var num = function (k) { var v = bud[k]; return typeof v === 'number' && isFinite(v) ? v : null; };
-    var in1 = num('in1'), in2 = num('in2'), sal1 = num('sal1'), sal2 = num('sal2'), sav1 = num('sav1'), sav2 = num('sav2'), bal = num('bal');
+    var in1 = num('in1'), in2 = num('in2'), bal = num('bal');
+    var inc1 = incomeOf(bud, 1), inc2 = incomeOf(bud, 2);
     var monthly = (in1 || 0) + (in2 || 0);
     var oneoff = oneoffGroups(cfg, bud);
     var isOne = function (e) { return oneoff.indexOf(groupOf(cfg, e.c)) >= 0; };
@@ -228,10 +241,9 @@
     var status = null;
     if (monthly > 0) status = spentNow > monthly + 0.005 ? 'over' : (spentNow > monthly * dayFrac + 0.005 ? 'pace' : 'ok');
 
-    var hasSal = sal1 !== null && sal2 !== null && sal1 + sal2 > 0;
-    var income = hasSal ? sal1 + sal2 : null;
-    var hasSav = hasSal && sav1 !== null && sav2 !== null;
-    var saveTotal = hasSav ? sav1 + sav2 : null;
+    var hasSal = inc1 !== null && inc2 !== null && inc1 + inc2 > 0;
+    var income = hasSal ? inc1 + inc2 : null;
+    var est = jointEstimate(exp, bud, cfg, today);
     return {
       has: monthly > 0, monthly: monthly, in1: in1, in2: in2,
       share: monthly > 0 && in1 !== null && in2 !== null ? [in1 / monthly, in2 / monthly] : null,
@@ -240,14 +252,107 @@
       avg: avg, avgN: base.length, overCount: months.filter(function (x) { return x.over && x.key < curKey; }).length,
       doneMonths: months.filter(function (x) { return x.key < curKey; }).length,
       hasSal: hasSal, income: income,
-      incShare: hasSal ? [sal1 / income, sal2 / income] : null,
-      fair: hasSal && monthly > 0 ? [monthly * sal1 / income, monthly * sal2 / income] : null,
-      inPct: hasSal && in1 !== null && in2 !== null ? [sal1 > 0 ? in1 / sal1 : null, sal2 > 0 ? in2 / sal2 : null] : null,
+      incShare: hasSal ? [inc1 / income, inc2 / income] : null,
+      fair: hasSal && monthly > 0 ? [monthly * inc1 / income, monthly * inc2 / income] : null,
+      inPct: hasSal && in1 !== null && in2 !== null ? [inc1 > 0 ? in1 / inc1 : null, inc2 > 0 ? in2 / inc2 : null] : null,
       homeRate: hasSal && monthly > 0 ? monthly / income : null,
-      hasSav: hasSav, saveTotal: saveTotal, saveRate: hasSav ? saveTotal / income : null,
-      freeTotal: hasSav && monthly > 0 ? income - monthly - saveTotal : null,
       bal: bal, balDate: typeof bud.balDate === 'string' ? bud.balDate : '',
-      cover: bal !== null && avg > 0 ? bal / avg : null
+      est: est, balNow: est ? est.est : bal,
+      cover: est && avg > 0 ? est.est / avg : (bal !== null && avg > 0 ? bal / avg : null)
+    };
+  }
+
+  /* ---------- rendimento, sobra de cada pessoa e saldo da conta conjunta ---------- */
+
+  /** Ordenado médio por mês: ordenado de um mês normal × pagamentos por ano (12 ou 14) ÷ 12. */
+  function incomeOf(bud, k) {
+    var sal = bud && typeof bud['sal' + k] === 'number' && isFinite(bud['sal' + k]) ? bud['sal' + k] : null;
+    if (sal === null) return null;
+    var pay = bud['pay' + k] === 14 ? 14 : 12;
+    return sal * pay / 12;
+  }
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+  /**
+   * Saldo estimado da conta conjunta: saldo de referência (bud.bal na data bud.balDate)
+   * + entradas mensais que já aconteceram desde então (no dia bud.inDay, por omissão 1)
+   * − despesas pagas pela conta conjunta desde então (só as com data de depois da referência e até hoje).
+   * Devolve null sem saldo de referência.
+   */
+  function jointEstimate(exp, bud, cfg, today) {
+    bud = bud || {};
+    var bal = typeof bud.bal === 'number' && isFinite(bud.bal) ? bud.bal : null;
+    var bd = typeof bud.balDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(bud.balDate) ? bud.balDate : '';
+    if (bal === null || !bd) return null;
+    var in1 = typeof bud.in1 === 'number' ? bud.in1 : 0, in2 = typeof bud.in2 === 'number' ? bud.in2 : 0;
+    var monthly = in1 + in2;
+    var day = typeof bud.inDay === 'number' && bud.inDay >= 1 && bud.inDay <= 28 ? Math.floor(bud.inDay) : 1;
+    var y = +bd.slice(0, 4), m = +bd.slice(5, 7), ty = +today.slice(0, 4), tm = +today.slice(5, 7), n = 0;
+    while (y * 12 + m <= ty * 12 + tm && n < 600) {
+      var ds = y + '-' + pad2(m) + '-' + pad2(day);
+      if (ds > bd && ds <= today) n++;
+      m++; if (m > 12) { m = 1; y++; }
+    }
+    var spent = sum(houseOf(exp, cfg).filter(function (e) {
+      return !same(e.p, cfg.p1) && !same(e.p, cfg.p2) && e.d && e.d > bd && e.d <= today;
+    }));
+    var contrib = n * monthly;
+    return { est: r2(bal + contrib - spent), bal: bal, balDate: bd, n: n, contrib: contrib, spent: spent, monthly: monthly, day: day };
+  }
+
+  /**
+   * A situação de uma pessoa (k = 1 ou 2), em médias mensais:
+   *   ordenado − entrada na conta conjunta − casa paga do bolso (a sua parte, depois de acertar contas) − gastos pessoais = sobra.
+   * Só entram meses já começados e a casa corrente (as compras pontuais ficam de fora, como no orçamento).
+   * Cada média usa os meses em que há movimento desse tipo, para não puxar a sobra para cima por falta de registos.
+   * exp = TODAS as despesas (casa + pessoais).
+   */
+  function person(exp, bud, cfg, today, k) {
+    bud = bud || {};
+    var name = k === 1 ? cfg.p1 : cfg.p2, q = k === 1 ? cfg.pct1 : 1 - cfg.pct1;
+    var income = incomeOf(bud, k);
+    var contrib = typeof bud['in' + k] === 'number' ? bud['in' + k] : null;
+    var oneoff = oneoffGroups(cfg, bud);
+    var ty = +today.slice(0, 4), tm = +today.slice(5, 7), curKey = ty * 100 + tm;
+    var mine = personalOf(exp, cfg).filter(function (e) { return e.y && same(e.p, name); });
+    var house = houseOf(exp, cfg).filter(function (e) { return e.y && oneoff.indexOf(groupOf(cfg, e.c)) < 0; });
+
+    var pers = {}, oop = {}, hmonth = {};
+    mine.forEach(function (e) { var key = e.y * 100 + e.m; pers[key] = (pers[key] || 0) + e.v; });
+    house.forEach(function (e) { var key = e.y * 100 + e.m; (hmonth[key] = hmonth[key] || []).push(e); });
+    Object.keys(hmonth).forEach(function (key) {
+      var l = hmonth[key], total = sum(l);
+      var d1 = sum(l.filter(function (e) { return same(e.p, cfg.p1); })), d2 = sum(l.filter(function (e) { return same(e.p, cfg.p2); }));
+      var joint = total - d1 - d2;
+      var o1 = sum(l.filter(function (e) { return same(e.x, cfg.splitP1); })), o2 = sum(l.filter(function (e) { return same(e.x, cfg.splitP2); }));
+      var shared = total - o1 - o2, q1 = cfg.pct1;
+      var part = k === 1 ? o1 + shared * q1 : o2 + shared * (1 - q1);
+      var jp = joint * (k === 1 ? q1 : 1 - q1);
+      oop[key] = part - jp;
+    });
+    var avgOf = function (map) {
+      var keys = Object.keys(map).map(Number).filter(function (x) { return x <= curKey; });
+      var done = keys.filter(function (x) { return x < curKey; });
+      var base = done.length ? done : keys;
+      return { avg: base.length ? base.reduce(function (a, x) { return a + map[x]; }, 0) / base.length : 0, n: base.length };
+    };
+    var pa = avgOf(pers), oa = avgOf(oop);
+    var hasInc = income !== null && contrib !== null;
+    var base = hasInc ? income - contrib : null;
+    var left = hasInc ? base - oa.avg - pa.avg : null;
+
+    var keys = Object.keys(pers).map(Number).filter(function (x) { return x <= curKey; }).sort(function (a, b) { return a - b; });
+    var months = keys.map(function (key) {
+      var o = oop[key] || 0;
+      return { key: key, y: Math.floor(key / 100), m: key % 100, pers: pers[key], oop: o, left: hasInc ? base - o - pers[key] : null, current: key === curKey };
+    });
+    return {
+      k: k, name: name, income: income, sal: typeof bud['sal' + k] === 'number' ? bud['sal' + k] : null, pay: bud['pay' + k] === 14 ? 14 : 12,
+      contrib: contrib, hasInc: hasInc,
+      persAvg: pa.avg, persN: pa.n, oopAvg: oa.avg, oopN: oa.n, hasPers: pa.n > 0,
+      persNow: pers[curKey] || 0, left: left, rate: hasInc && income > 0 ? left / income : null,
+      months: months
     };
   }
 
@@ -255,6 +360,7 @@
     r2: r2, sum: sum, same: same, prep: prep, inPeriod: inPeriod, filterPeriod: filterPeriod, years: years,
     avgPerMonth: avgPerMonth, monthsWithSpend: monthsWithSpend, groupOf: groupOf,
     byCategory: byCategory, byGroup: byGroup, byRoom: byRoom, series: series, catSeries: catSeries,
-    payerSplit: payerSplit, settle: settle, settleMonth: settleMonth, oneoffGroups: oneoffGroups, budget: budget
+    payerSplit: payerSplit, settle: settle, settleMonth: settleMonth, oneoffGroups: oneoffGroups, budget: budget,
+    isPersonal: isPersonal, houseOf: houseOf, personalOf: personalOf, incomeOf: incomeOf, jointEstimate: jointEstimate, person: person
   };
 });

@@ -254,3 +254,12 @@ body.setup-mode #toast { bottom: 18px; }
 .amt-sm { display: flex; align-items: center; gap: 6px; }
 .amt-sm input { text-align: right; font-weight: 700; min-height: 48px; }
 .amt-sm > span { color: var(--muted); font-weight: 700; }
+
+/* ---- v5: gastos pessoais, âmbito do painel, lote ---- */
+.scope { margin: 0 0 12px; }
+.scope .seg span { min-height: 44px; }
+.brow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.brow:first-child { border-top: 0; }
+.brow .amt-sm { width: 140px; flex: none; }
+.brow .kv-l { font-weight: 600; }
+.card .mrow .small { font-size: 13px; }

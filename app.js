@@ -23,12 +23,12 @@
   var conf = null;    // configuração da folha (categorias, pessoas, quotas…)
   var bud = {};       // orçamento e poupança (folha «Orçamento»)
   var st = {
-    exp: [], tr: [], loaded: false, legacy: false, serverV: 0, fetchedAt: 0, loadErr: '', tab: 'add',
-    dash: { year: null, month: 0, evo: null, slots: {}, tableA: false, tableE: false, allCats: false },
-    list: { q: '', year: 'all', month: 0, cat: '', payer: '', limit: 40 },
+    all: [], exp: [], pexp: [], tr: [], loaded: false, legacy: false, serverV: 0, fetchedAt: 0, loadErr: '', tab: 'add',
+    dash: { year: null, month: 0, scope: 'house', evo: null, slots: {}, tableA: false, tableE: false, allCats: false, pmTable: false },
+    list: { q: '', year: 'all', month: 0, cat: '', payer: '', kind: '', limit: 40 },
     debt: { year: null }
   };
-  var ui = { theme: 'auto', accent: 'navy' };
+  var ui = { theme: 'auto', accent: 'navy', me: '' };   // me: 'p1' | 'p2' (só neste telemóvel)
   var busy = false;
 
   /* ====================== utilitários ====================== */
@@ -91,6 +91,11 @@
   function same(a, b) { return Calc.same(a, b); }
   function otherOf(n) { return same(n, conf.p1) ? conf.p2 : conf.p1; }
   function payerName(e) { return e.p || conf.joint; }
+  /** Gastos pessoais disponíveis: servidor na versão 5 e categorias pessoais definidas. */
+  function personalOn() { return !!(conf && conf.pcats && conf.pcats.length && st.serverV >= 5); }
+  function isPers(cat) { return !!(conf && conf.pcats && conf.pcats.indexOf(cat) >= 0); }
+  function myName() { return ui.me === 'p2' ? conf.p2 : conf.p1; }
+  function personName(k) { return k === 2 ? conf.p2 : conf.p1; }
 
   var toastTimer;
   function toast(msg, o) {
@@ -137,7 +142,9 @@
 
   function applyData(d, fromCache) {
     conf = d.cfg; bud = d.bud || {};
-    st.exp = Calc.prep(d.exp);
+    st.all = Calc.prep(d.exp);
+    st.exp = Calc.houseOf(st.all, conf);        // despesas da casa (Painel, Dívidas, orçamento)
+    st.pexp = Calc.personalOf(st.all, conf);    // gastos pessoais (cada um os seus)
     st.tr = d.tr.slice();
     st.loaded = true; st.legacy = false; st.serverV = d.v || 3; st.loadErr = '';
     if (!fromCache) { st.fetchedAt = Date.now(); lsSet(CACHE, d); }
@@ -182,7 +189,7 @@
 
   function showSetup(msg) {
     CFG = null; lsDel(STORE); lsDel(CACHE);
-    conf = null; bud = {}; st.loaded = false; st.exp = []; st.tr = [];
+    conf = null; bud = {}; st.loaded = false; st.all = []; st.exp = []; st.pexp = []; st.tr = [];
     $('#app').hidden = true; $('#nav').hidden = true; $('#setup').hidden = false;
     document.body.classList.add('setup-mode');
     $('#sErr').textContent = msg || '';
@@ -322,51 +329,76 @@
     return s;
   }
 
-  /** Formulário de despesa, usado para adicionar e para editar. */
+  /** Formulário de despesa, usado para adicionar e para editar. Com gastos pessoais ligados, tem o modo Casa / Pessoal. */
   function expenseForm(init, o) {
     var n = ++uid, id = function (k) { return 'f' + n + k; };
+    var pOn = personalOn();
     var value = h('input', { id: id('v'), type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0,00', 'aria-label': 'Valor em euros' });
     var desc = h('input', { id: id('d'), type: 'text', autocomplete: 'off', maxLength: 200, placeholder: 'ex.: Fatura da luz, Sofá…', list: 'descList' });
     desc.setAttribute('list', 'descList');
     var cat = selectCtl(id('c'), conf.cats, 'Escolhe a categoria…', init.c);
     var hint = h('p', { class: 'hint' });
+    var phint = h('p', { class: 'hint' });
+    var mode = pOn ? segCtl('m' + n, ['Casa', 'Pessoal'], isPers(init.c) ? 'Pessoal' : 'Casa', function (v) { setMode(v, true); }) : null;
     var payer = segCtl('p' + n, [conf.joint, conf.p1, conf.p2], conf.joint, function (v) { setHint(v); });
+    var payerP = segCtl('q' + n, [conf.p1, conf.p2], myName(), function (v) { setPHint(v); });
     var split = segCtl('x' + n, [conf.splitShared, conf.splitP1, conf.splitP2], conf.splitShared);
     var date = h('input', { id: id('t'), type: 'date' });
     var room = selectCtl(id('r'), conf.rooms, '— nenhuma —', init.h);
     var notes = h('input', { id: id('n'), type: 'text', autocomplete: 'off', maxLength: 200 });
     var err = h('div', { class: 'err-inline', role: 'alert' });
     var submit = h('button', { class: 'primary', type: 'submit', text: o.submitLabel });
-    var more = h('details', null, h('summary', { text: 'Mais opções' }),
-      h('label', { class: 'lbl', htmlFor: id('r') }, 'Divisão da casa ', h('small', { text: '(opcional)' })), room,
+    var gHouse = h('div', null, h('div', { class: 'lbl', style: 'margin-top:14px', text: 'Quem pagou' }), payer.el, hint, h('div', { class: 'lbl', text: 'Partilha' }), split.el);
+    var gPers = h('div', { hidden: true }, h('div', { class: 'lbl', style: 'margin-top:14px', text: 'De quem é' }), payerP.el, phint);
+    var gRoom = h('div', null, h('label', { class: 'lbl', style: 'margin-top:14px', htmlFor: id('r') }, 'Divisão da casa ', h('small', { text: '(opcional)' })), room);
+    var more = h('details', null, h('summary', { text: 'Mais opções' }), gRoom,
       h('label', { class: 'lbl', htmlFor: id('n') }, 'Notas ', h('small', { text: '(opcional)' })), notes);
     var form = h('form', { class: 'card', novalidate: true },
+      mode ? h('div', null, h('div', { class: 'lbl', style: 'margin-top:0', text: 'Tipo de despesa' }), mode.el) : null,
       h('label', { class: 'lbl', htmlFor: id('v') }, 'Valor'),
       h('div', { class: 'amount' }, value, h('span', { text: '€' })),
       h('label', { class: 'lbl', htmlFor: id('d') }, 'Descrição'), desc,
       h('label', { class: 'lbl', htmlFor: id('c') }, 'Categoria'), cat,
-      h('div', { class: 'lbl', text: 'Quem pagou' }), payer.el, hint,
-      h('div', { class: 'lbl', text: 'Partilha' }), split.el,
+      gHouse, gPers,
       h('label', { class: 'lbl', htmlFor: id('t') }, 'Data'), date,
       more, err, submit);
     form.setAttribute('novalidate', '');
 
+    var isP = function () { return !!mode && mode.get() === 'Pessoal'; };
     function setHint(v) {
       hint.textContent = v === conf.joint ? 'Conta conjunta: nada para acertar entre vocês.' : 'Pago do bolso de ' + v + ': o outro deve a sua parte (se for partilhado).';
+    }
+    function setPHint(v) { phint.textContent = 'Gasto só de ' + v + ': não entra nas despesas da casa nem nas dívidas.'; }
+    // Muda de Casa para Pessoal (e vice-versa): troca a lista de categorias e o que se pergunta.
+    function setMode(m, keepCat) {
+      if (!mode) return;
+      var pers = m === 'Pessoal';
+      mode.set(m);
+      var cur = cat.value, items = pers ? conf.pcats : conf.cats;
+      cat.textContent = '';
+      cat.append(h('option', { value: '', text: 'Escolhe a categoria…' }));
+      items.forEach(function (t) { cat.append(h('option', { value: t, text: t })); });
+      if (cur && items.indexOf(cur) >= 0) cat.value = cur;
+      else if (cur && !keepCat) { cat.append(h('option', { value: cur, text: cur })); cat.value = cur; }
+      else cat.value = '';
+      gHouse.hidden = pers; gPers.hidden = !pers; gRoom.hidden = pers;
+      setPHint(payerP.get());
     }
     function fill(e) {
       value.value = e.v != null ? numStr(e.v) : '';
       desc.value = e.s || '';
-      if (e.c && conf.cats.indexOf(e.c) < 0 && !$('option[value="' + e.c.replace(/"/g, '') + '"]', cat)) cat.append(h('option', { value: e.c, text: e.c }));
+      if (mode && e.c) setMode(isPers(e.c) ? 'Pessoal' : 'Casa', true);
+      if (e.c && (isP() ? conf.pcats : conf.cats).indexOf(e.c) < 0 && !$('option[value="' + e.c.replace(/"/g, '') + '"]', cat)) cat.append(h('option', { value: e.c, text: e.c }));
       cat.value = e.c || '';
-      payer.set(e.p || conf.joint); setHint(e.p || conf.joint);
-      split.set(e.x || conf.splitShared);
+      if (isP()) { if (e.p) payerP.set(e.p); setPHint(payerP.get()); }
+      else { payer.set(e.p || conf.joint); setHint(e.p || conf.joint); split.set(e.x || conf.splitShared); }
       date.value = e.d || todayStr();
       room.value = e.h || '';
       notes.value = e.n || '';
       if (e.h || e.n) more.open = true;
     }
     fill(init);
+    if (mode) setMode(mode.get(), true);
     if (!init.d) date.value = todayStr();
 
     // Ao escrever uma descrição já usada, sugere a categoria/divisão/quem pagou da última vez.
@@ -374,9 +406,11 @@
       var q = desc.value.trim().toLowerCase();
       if (!q || cat.value) return;
       var prev = null;
-      for (var i = st.exp.length - 1; i >= 0; i--) if (st.exp[i].s.trim().toLowerCase() === q) { prev = st.exp[i]; break; }
+      for (var i = st.all.length - 1; i >= 0; i--) if (st.all[i].s.trim().toLowerCase() === q) { prev = st.all[i]; break; }
       if (!prev) return;
-      if (conf.cats.indexOf(prev.c) >= 0) cat.value = prev.c;
+      if (mode && isPers(prev.c) !== isP()) setMode(isPers(prev.c) ? 'Pessoal' : 'Casa', true);
+      if ((isP() ? conf.pcats : conf.cats).indexOf(prev.c) >= 0) cat.value = prev.c;
+      if (isP()) { if (prev.p) payerP.set(prev.p); setPHint(payerP.get()); return; }
       if (prev.h && conf.rooms.indexOf(prev.h) >= 0) { room.value = prev.h; more.open = true; }
       payer.set(prev.p || conf.joint); setHint(prev.p || conf.joint);
       split.set(prev.x || conf.splitShared);
@@ -390,6 +424,10 @@
       if (!desc.value.trim()) return fail('Escreve uma descrição.', desc);
       if (!cat.value) return fail('Escolhe a categoria.', cat);
       if (!date.value) return fail('Escolhe a data.', date);
+      if (isP()) {
+        var who = payerP.get();
+        return { date: date.value, value: v, desc: desc.value.trim(), category: cat.value, payer: who, split: who === conf.p1 ? conf.splitP1 : conf.splitP2, room: '', notes: notes.value.trim() };
+      }
       return { date: date.value, value: v, desc: desc.value.trim(), category: cat.value, payer: payer.get(), split: split.get(), room: room.value, notes: notes.value.trim() };
     }
     form.addEventListener('submit', function (ev) {
@@ -431,14 +469,26 @@
         st.loadErr ? h('button', { class: 'ghost block', type: 'button', text: 'Tentar outra vez', onclick: function () { refresh(true); } }) : null));
       return;
     }
-    var sig = JSON.stringify([conf.cats, conf.rooms, conf.joint, conf.p1, conf.p2, conf.splitShared, conf.splitP1, conf.splitP2]);
+    var sig = JSON.stringify([conf.cats, conf.pcats, personalOn(), ui.me, conf.rooms, conf.joint, conf.p1, conf.p2, conf.splitShared, conf.splitP1, conf.splitP2]);
     if (sig !== addSig) {
       addSig = sig;
       root.textContent = '';
       addForm = expenseForm({}, { submitLabel: 'Guardar despesa', suggest: true, onSubmit: submitNew });
-      root.append(addForm.el, h('div', { class: 'card', id: 'recentCard' }));
+      root.append(addForm.el, h('div', { class: 'card', id: 'batchCard', hidden: true }), h('div', { class: 'card', id: 'recentCard' }));
     }
+    renderBatchCard();
     renderRecent();
+  }
+
+  /** Atalho para lançar os gastos pessoais do mês de uma vez (só com o servidor na versão 5). */
+  function renderBatchCard() {
+    var c = $('#batchCard');
+    if (!c) return;
+    c.textContent = '';
+    c.hidden = !(personalOn() && st.loaded);
+    if (c.hidden) return;
+    c.append(cardHead('Gastos pessoais do mês', 'Fim do mês? Lança tudo de uma vez, só por categoria.'),
+      h('button', { type: 'button', class: 'ghost block', text: 'Lançar o mês de uma vez', onclick: function () { openBatch(); } }));
   }
 
   function renderRecent() {
@@ -448,7 +498,7 @@
     if (st.legacy || !st.loaded) { c.hidden = true; return; }
     c.hidden = false;
     c.append(h('div', { class: 'card-h' }, h('div', null, h('div', { class: 'card-t', text: 'Últimas despesas' }), h('div', { class: 'card-sub', text: 'Toca numa para corrigir ou apagar.' }))));
-    var last = st.exp.slice().sort(function (a, b) { return b.r - a.r; }).slice(0, 5);
+    var last = st.all.slice().sort(function (a, b) { return b.r - a.r; }).slice(0, 5);
     if (!last.length) { c.append(h('div', { class: 'empty', text: 'Ainda não há despesas.' })); return; }
     last.forEach(function (e) { c.append(expRow(e)); });
   }
@@ -459,7 +509,7 @@
       addForm.setBusy(false);
       if (r.data) applyData(r.data);
       addForm.reset();
-      var added = r.data ? st.exp.filter(function (e) { return e.r === r.row; })[0] : null;
+      var added = r.data ? st.all.filter(function (e) { return e.r === r.row; })[0] : null;
       toast('Guardado ✓  ' + r.summary, added ? { action: { label: 'Desfazer', fn: function () { undoAdd(added); } } } : null);
     }, function (e) { addForm.setBusy(false); handleErr(e); });
   }
@@ -471,7 +521,7 @@
     var dl = $('#descList');
     if (!dl) return;
     var seen = {}, out = [];
-    st.exp.slice().sort(function (a, b) { return b.r - a.r; }).forEach(function (e) {
+    st.all.slice().sort(function (a, b) { return b.r - a.r; }).forEach(function (e) {
       var k = e.s.trim().toLowerCase();
       if (k && !seen[k] && out.length < 150) { seen[k] = 1; out.push(e.s.trim()); }
     });
@@ -535,12 +585,12 @@
   }
 
   /** Lista de despesas numa gaveta (usada em todos os «ver as despesas por trás»). */
-  function openList(title, pred) {
+  function openList(title, pred, src) {
     pushSheet({
       kind: 'list', title: title, sort: 'date', limit: 60,
       render: function (body) {
         var s = sheetStack[sheetStack.length - 1];
-        var items = st.exp.filter(pred);
+        var items = (src || st.exp).filter(pred);
         items.sort(s.sort === 'value' ? function (a, b) { return b.v - a.v; } : function (a, b) { return (b.d || '').localeCompare(a.d || '') || b.r - a.r; });
         var total = Calc.sum(items);
         var card = h('div', { class: 'card' },
@@ -553,6 +603,96 @@
         items.slice(0, s.limit).forEach(function (e) { card.append(expRow(e)); });
         if (items.length > s.limit) card.append(h('button', { type: 'button', class: 'ghost block', text: 'Mostrar mais', onclick: function () { s.limit += 60; showSheet(true); } }));
         body.append(card);
+      }
+    });
+  }
+
+  /* ====================== LOTE DE GASTOS PESSOAIS ====================== */
+
+  function lastDayOf(y, m) { return new Date(y, m, 0).getDate(); }
+  function p2(n) { return (n < 10 ? '0' : '') + n; }
+
+  /** Gaveta para lançar, de uma vez, os gastos pessoais de um mês (um valor por categoria). */
+  function openBatch() {
+    pushSheet({
+      kind: 'batch', title: 'Gastos pessoais do mês',
+      render: function (body) {
+        var t = todayStr(), ty = +t.slice(0, 4), tm = +t.slice(5, 7), td = +t.slice(8, 10);
+        // ao início do mês é provável que se esteja a fechar o mês anterior
+        var dy = td <= 7 ? (tm === 1 ? ty - 1 : ty) : ty, dm = td <= 7 ? (tm === 1 ? 12 : tm - 1) : tm;
+        var who = segCtl('bw', [conf.p1, conf.p2], myName(), function () { hints(); });
+        var msel = h('select', { 'aria-label': 'Mês' });
+        var cy = ty, cm = tm;
+        for (var i = 0; i < 13; i++) {
+          msel.append(h('option', { value: cy + '-' + p2(cm), text: cap(MONTHS[cm - 1]) + ' de ' + cy }));
+          cm--; if (cm === 0) { cm = 12; cy--; }
+        }
+        msel.value = dy + '-' + p2(dm);
+        msel.addEventListener('change', function () { hints(); });
+        var rows = {}, totalEl = h('div', { class: 'kv-r' }), err = h('div', { class: 'err-inline', role: 'alert' });
+        var card = h('div', { class: 'card stack' },
+          h('div', null, h('div', { class: 'lbl', style: 'margin-top:0', text: 'De quem são estes gastos' }), who.el),
+          h('div', null, h('div', { class: 'lbl', text: 'Mês' }), msel),
+          h('div', { class: 'hint', style: 'margin-top:0', text: 'Escreve só o que gastaste em cada categoria. O que deixares em branco não é lançado, e o que já estava lançado fica como está (soma-se).' }));
+        var list = h('div');
+        conf.pcats.forEach(function (c) {
+          var inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0,00', 'aria-label': c });
+          var sub = h('span', { class: 'kv-s' });
+          rows[c] = { inp: inp, sub: sub };
+          inp.addEventListener('input', total);
+          list.append(h('div', { class: 'brow' }, h('span', null, h('span', { class: 'kv-l', text: c }), sub), h('div', { class: 'amt-sm' }, inp, h('span', { text: '€' }))));
+        });
+        card.append(list, totalEl);
+        var save = h('button', { type: 'button', class: 'primary', text: 'Guardar tudo' });
+        card.append(err, save);
+        body.append(card);
+
+        function ym() { var v = msel.value; return [+v.slice(0, 4), +v.slice(5, 7)]; }
+        function hints() {
+          var p = ym(), key = p[0] * 100 + p[1];
+          conf.pcats.forEach(function (c) {
+            var done = Calc.sum(st.pexp.filter(function (e) { return e.y * 100 + e.m === key && same(e.p, who.get()) && e.c === c; }));
+            rows[c].sub.textContent = Math.abs(done) > 0.005 ? 'já lançado: ' + money(done) : '';
+          });
+        }
+        function total() {
+          var sum = 0, n = 0, bad = false;
+          conf.pcats.forEach(function (c) {
+            var t = rows[c].inp.value.trim();
+            if (!t) return;
+            var v = parseNum(t);
+            if (!isFinite(v) || v === 0) { bad = true; return; }
+            sum += v; n++;
+          });
+          totalEl.textContent = '';
+          totalEl.append(h('span', { class: 'kv-l', text: n ? 'A lançar' : 'Nada para lançar' }), h('b', { text: n ? money(sum) + ' · ' + n + (n === 1 ? ' categoria' : ' categorias') : '' }));
+          return { sum: sum, n: n, bad: bad };
+        }
+        hints(); total();
+        save.addEventListener('click', function () {
+          if (busy) return;
+          var tt = total();
+          if (tt.bad) { err.textContent = 'Há um valor inválido (usa números; negativo para reembolso).'; return; }
+          if (!tt.n) { err.textContent = 'Escreve pelo menos um valor.'; return; }
+          err.textContent = '';
+          var p = ym(), last = lastDayOf(p[0], p[1]);
+          var day = (p[0] === ty && p[1] === tm) ? Math.min(td, last) : last;   // nunca com data futura
+          var date = p[0] + '-' + p2(p[1]) + '-' + p2(day), me = who.get();
+          var out = [];
+          conf.pcats.forEach(function (c) {
+            var t = rows[c].inp.value.trim();
+            if (!t) return;
+            out.push({ date: date, category: c, desc: c + ' · ' + MONTHS[p[1] - 1], value: parseNum(t), payer: me, split: me === conf.p1 ? conf.splitP1 : conf.splitP2, room: '', notes: '' });
+          });
+          busy = true; save.disabled = true; save.textContent = 'A guardar…';
+          call('addExpenses', [out, true], function (r) {
+            busy = false; save.disabled = false; save.textContent = 'Guardar tudo';
+            applyData(r.data); closeSheet(); toast('Guardado ✓  ' + r.summary);
+          }, function (e) {
+            busy = false; save.disabled = false; save.textContent = 'Guardar tudo';
+            if (e && /desconhecido/i.test(e.message || '')) toast('O servidor ainda não está na versão 5.', { err: true }); else handleErr(e);
+          });
+        });
       }
     });
   }
@@ -683,7 +823,7 @@
     var goSet = function () { st.setFocus = 'budget'; showTab('set'); };
     if (!B.has) {
       return h('div', { class: 'card' }, cardHead('Orçamento da casa', 'Opcional'),
-        h('p', { class: 'muted', style: 'margin:0 0 6px', text: 'Diz quanto entra por mês na conta conjunta e a app mostra se estão dentro do previsto, e quanto sobra para poupar.' }),
+        h('p', { class: 'muted', style: 'margin:0 0 6px', text: 'Diz quanto entra por mês na conta conjunta e a app mostra se estão dentro do previsto.' }),
         h('button', { type: 'button', class: 'ghost block', text: 'Definir orçamento', onclick: goSet }));
     }
     var oneoff = B.oneoff;
@@ -728,20 +868,18 @@
       row('Média mensal corrente', money0(B.avg), B.avgN + (B.avgN === 1 ? ' mês' : ' meses') + ' · ' + pct(B.avg / B.monthly) + ' do orçamento · ' + (gap >= 0 ? 'sobram ' + money0(gap) : 'faltam ' + money0(-gap)) + ' por mês');
     }
     if (B.doneMonths) row('Meses acima do orçamento', B.overCount + ' de ' + B.doneMonths, 'só meses já acabados');
-    if (B.bal !== null) {
-      row('Saldo da conta conjunta', money0(B.bal), (B.balDate ? 'a ' + fmtDate(B.balDate) : '') + (B.cover !== null ? ' · cobre ' + nf1.format(B.cover) + ' meses de gasto corrente' : ''));
-      if (B.avg > 0) row('Colchão de segurança', money0(B.avg) + ' a ' + money0(B.avg * 2), '1 a 2 meses de gasto corrente médio');
+    if (B.balNow !== null && B.avg > 0) {
+      row('A conta conjunta cobre', nf1.format(B.cover) + ' meses', 'de gasto corrente médio · saldo ' + (B.est ? 'estimado' : 'indicado') + ' de ' + money0(B.balNow));
+      row('Colchão de segurança', money0(B.avg) + ' a ' + money0(B.avg * 2), '1 a 2 meses de gasto corrente médio');
     }
     if (kv.childNodes.length) card.append(h('div', { class: 'lbl', text: 'Em resumo' }), kv);
 
     /* rendimento */
     if (B.hasSal) {
-      var inc = B.income, seg = [['Casa (conta conjunta)', B.monthly, 'var(--s1)']];
-      if (B.hasSav) { seg.push(['Poupança', B.saveTotal, 'var(--s3)']); seg.push(['Livre para gastos pessoais', Math.max(0, B.freeTotal), 'var(--gray)']); }
-      else seg.push(['Resto (poupança e gastos pessoais)', Math.max(0, inc - B.monthly), 'var(--gray)']);
+      var inc = B.income, seg = [['Casa (conta conjunta)', B.monthly, 'var(--s1)'], ['Fica para cada um', Math.max(0, inc - B.monthly), 'var(--s3)']];
       var thin = h('div', { class: 'thin', role: 'img', 'aria-label': 'Para onde vai o rendimento: ' + seg.map(function (x) { return x[0] + ' ' + pct(x[1] / inc); }).join(', ') });
       seg.forEach(function (x) { if (x[1] > 0) thin.append(h('i', { style: 'width:' + (x[1] / inc * 100) + '%;background:' + x[2] })); });
-      card.append(h('div', { class: 'lbl', text: 'Para onde vai o rendimento (' + money0(inc) + '/mês)' }), thin);
+      card.append(h('div', { class: 'lbl', text: 'Para onde vai o rendimento (média de ' + money0(inc) + '/mês)' }), thin);
       seg.forEach(function (x) {
         card.append(h('div', { class: 'legend-row static' }, h('i', { class: 'swatch', style: 'background:' + x[2] }),
           h('span', null, h('span', { class: 'nm', text: x[0] }), h('br'), h('span', { class: 'sb', text: pct(x[1] / inc) + ' do rendimento' })), h('span', { class: 'vl', text: money0(x[1]) })));
@@ -753,37 +891,57 @@
           ? 'Entram ' + pct(B.share[0]) + ' / ' + pct(B.share[1]) + ' (' + conf.p1 + ' / ' + conf.p2 + ') e os ordenados são ' + pct(B.incShare[0]) + ' / ' + pct(B.incShare[1]) + ': proporcional ✓.'
           : (df > 0 ? conf.p1 : conf.p2) + ' mete ' + Math.round(Math.abs(df) * 100) + ' pontos a mais do que a proporção do ordenado (seria ' + money0(B.fair[0]) + ' e ' + money0(B.fair[1]) + ').');
       }
-      if (B.hasSav) notes.push('Poupança: ' + pct(B.saveRate) + ' do rendimento. A regra 50/30/20 (só um guia) aponta para cerca de 20%.');
-      notes.push('Só contam as despesas registadas aqui: gastos pessoais fora da casa não entram.');
+      notes.push(personalOn() ? 'O que sobra a cada um, depois dos gastos pessoais, está no Painel de cada pessoa (em cima, ao lado de «Casa»).' : 'Para ver o que sobra a cada um depois dos gastos pessoais, atualiza o servidor para a versão 5 (Definições).');
       notes.forEach(function (t) { card.append(h('div', { class: 'hint', text: t })); });
     }
     return card;
   }
 
-  /** Definições: ordenados, entrada na conta conjunta, poupança, saldo e compras pontuais. */
+  /** Definições: ordenados (12 ou 14 pagamentos), entrada na conta conjunta, saldo de referência, compras pontuais e categorias pessoais. */
   function budgetSettingsCard() {
-    var card = h('div', { class: 'card stack', id: 'budCard' }, cardHead('Orçamento e poupança', 'Opcional · igual nos dois telemóveis'));
+    var card = h('div', { class: 'card stack', id: 'budCard' }, cardHead('Dinheiro e poupança', 'Opcional · igual nos dois telemóveis'));
     if (st.legacy || st.serverV < 4) {
-      card.append(h('div', { class: 'muted', text: 'Precisa do servidor na versão 4. Abre o Apps Script da folha, substitui o conteúdo de Código.gs pelo ficheiro novo e, em Implementar › Gerir implementações, escolhe o lápis, «Nova versão» e Implementar. O endereço e o código mantêm-se.' }));
+      card.append(h('div', { class: 'muted', text: 'Precisa do servidor na versão 5. Abre o Apps Script da folha, substitui o conteúdo de Código.gs pelo ficheiro novo e, em Implementar › Gerir implementações, escolhe o lápis, «Nova versão» e Implementar. O endereço e o código mantêm-se.' }));
       return card;
     }
     var B = bud || {};
     var inputs = {};
-    var fld = function (key, name) {
-      var inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '—', 'aria-label': name });
+    var fld = function (key, name, ph) {
+      var inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: ph || '—', 'aria-label': name });
       inp.value = typeof B[key] === 'number' ? numStr(B[key]) : '';
       inputs[key] = inp;
-      return h('div', { class: 'fld' }, h('span', { class: 'fl', text: name }), h('div', { class: 'amt-sm' }, inp, h('span', { text: '€' })));
+      return h('div', { class: 'fld' }, h('span', { class: 'fl', text: name }), h('div', { class: 'amt-sm' }, inp, h('span', { text: key === 'inDay' ? '' : '€' })));
     };
     var pair = function (k1, k2) { return h('div', { class: 'pair' }, fld(k1, conf.p1), fld(k2, conf.p2)); };
-    var live = h('div', { class: 'hint' });
+    var paySel = function (key, name) {
+      var sel = h('select', { 'aria-label': 'Pagamentos por ano de ' + name });
+      sel.append(h('option', { value: '12', text: '12 por ano' }), h('option', { value: '14', text: '14 por ano' }));
+      sel.value = B[key] === 14 ? '14' : '12';
+      inputs[key] = sel;
+      return sel;
+    };
+    var live = h('div', { class: 'hint' }), live2 = h('div', { class: 'hint' }), live3 = h('div', { class: 'hint' });
     var upd = function () {
-      var a = parseNum(inputs.in1.value), b = parseNum(inputs.in2.value), s1 = parseNum(inputs.sal1.value), s2 = parseNum(inputs.sal2.value), t = '';
-      if (a >= 0 && b >= 0 && a + b > 0) {
-        t = conf.p1 + ' ' + pct(a / (a + b)) + ' · ' + conf.p2 + ' ' + pct(b / (a + b)) + ' (total ' + money0(a + b) + ')';
-        if (s1 > 0 && s2 > 0) t += '. Pelo ordenado seria ' + money0((a + b) * s1 / (s1 + s2)) + ' e ' + money0((a + b) * s2 / (s1 + s2)) + '.';
+      var num = function (k) { var v = parseNum(inputs[k].value); return isFinite(v) && v >= 0 ? v : null; };
+      var s1 = num('sal1'), s2 = num('sal2'), a = num('in1'), b = num('in2');
+      var p1 = +inputs.pay1.value, p2 = +inputs.pay2.value;
+      var i1 = s1 === null ? null : s1 * p1 / 12, i2 = s2 === null ? null : s2 * p2 / 12, t = [];
+      if (i1 !== null) t.push(conf.p1 + ' ' + money0(i1) + '/mês' + (p1 === 14 ? ' (' + money0(s1) + ' × 14 ÷ 12)' : ''));
+      if (i2 !== null) t.push(conf.p2 + ' ' + money0(i2) + '/mês' + (p2 === 14 ? ' (' + money0(s2) + ' × 14 ÷ 12)' : ''));
+      live.textContent = t.length ? 'Média por mês: ' + t.join(' · ') + '.' : '';
+      var t2 = '';
+      if (a !== null && b !== null && a + b > 0) {
+        t2 = conf.p1 + ' ' + pct(a / (a + b)) + ' · ' + conf.p2 + ' ' + pct(b / (a + b)) + ' (total ' + money0(a + b) + ')';
+        if (i1 !== null && i2 !== null && i1 + i2 > 0) t2 += '. Pelo ordenado seria ' + money0((a + b) * i1 / (i1 + i2)) + ' e ' + money0((a + b) * i2 / (i1 + i2)) + '.';
       }
-      live.textContent = t;
+      live2.textContent = t2;
+      var bal = parseNum(inputs.bal.value), t3 = '';
+      if (inputs.bal.value.trim() && isFinite(bal) && inputs.balDate.value) {
+        var d = parseNum(inputs.inDay.value);
+        var est = Calc.jointEstimate(st.exp, { bal: bal, balDate: inputs.balDate.value, in1: a || 0, in2: b || 0, inDay: isFinite(d) ? d : 1 }, conf, todayStr());
+        if (est) t3 = 'Estimativa de hoje: ' + money(est.est) + ' (' + est.n + (est.n === 1 ? ' entrada' : ' entradas') + ' e ' + money0(est.spent) + ' pagos pela conta conjunta desde essa data).';
+      }
+      live3.textContent = t3;
     };
     var one = {};
     Calc.oneoffGroups(conf, B).forEach(function (g) { one[g] = 1; });
@@ -793,39 +951,91 @@
       b.addEventListener('click', function () { one[g] = one[g] ? 0 : 1; b.setAttribute('aria-pressed', String(!!one[g])); });
       chips.append(b);
     });
-    var err = h('div', { class: 'err-inline', role: 'alert' });
+    var dateIn = h('input', { type: 'date', 'aria-label': 'Data do saldo' });
+    dateIn.value = B.balDate || todayStr();
+    inputs.balDate = dateIn;
+    var balRow = h('div', { class: 'pair' }, fld('bal', 'Saldo', 'ex.: 0'), h('div', { class: 'fld' }, h('span', { class: 'fl', text: 'A (data)' }), dateIn));
+
+    var err = h('div', { class: 'err-inline', id: 'budErr', role: 'alert' });
     var save = h('button', { type: 'button', class: 'primary', text: 'Guardar' });
     card.append(
       h('div', { class: 'hint', style: 'margin-top:0', text: 'Fica guardado na folha e os dois veem estes valores.' }),
-      h('div', { class: 'lbl', style: 'margin-top:14px', text: 'Ordenado líquido por mês' }), pair('sal1', 'sal2'),
-      h('div', { class: 'lbl', text: 'Quanto entra por mês na conta conjunta' }), pair('in1', 'in2'), live,
-      h('div', { class: 'lbl', text: 'Poupança por mês (fora da conta conjunta)' }), pair('sav1', 'sav2'),
-      h('div', { class: 'lbl', text: 'Saldo da conta conjunta' }),
-      h('div', { class: 'pair' }, fld('bal', 'Saldo'), h('div')),
-      h('div', { class: 'hint', text: B.balDate ? 'Atualizado a ' + fmtDate(B.balDate) + '. Atualiza de vez em quando, não é preciso todos os dias.' : 'Escreve o saldo que vês no banco. Atualiza de vez em quando.' }),
+      h('div', { class: 'lbl', style: 'margin-top:14px', text: 'Ordenado líquido de um mês normal' }), pair('sal1', 'sal2'),
+      h('div', { class: 'lbl', text: 'Pagamentos por ano' }), h('div', { class: 'pair' }, paySel('pay1', conf.p1), paySel('pay2', conf.p2)), live,
+      h('div', { class: 'hint', text: 'Escreve o que cai na conta num mês normal. Com 14 pagamentos (subsídios de férias e Natal à parte), a app usa a média: ordenado × 14 ÷ 12. Se recebes os subsídios diluídos no mês, escolhe 12.' }),
+      h('div', { class: 'lbl', text: 'Quanto entra por mês na conta conjunta' }), pair('in1', 'in2'), live2,
+      h('div', { class: 'lbl', text: 'Dia do mês em que entra' }), h('div', { class: 'pair' }, fld('inDay', 'Dia (1 a 28)', '1'), h('div')),
+      h('div', { class: 'lbl', text: 'Saldo da conta conjunta (só uma vez)' }), balRow, live3,
+      h('div', { class: 'hint', text: 'Escreve o saldo que vês no banco e a data. A partir daí a app estima o saldo sozinha (entradas − despesas pagas pela conta conjunta): não tens de o andar a atualizar. Se a conta ainda não existe, escreve 0 e a data em que vai abrir.' }),
       h('div', { class: 'lbl', text: 'Compras pontuais (não contam para o orçamento mensal)' }), chips,
-      h('div', { class: 'hint', text: 'Ex.: mobília e eletrodomésticos. Servem para ver só o gasto do dia a dia contra o orçamento.' }),
-      err, save);
-    ['in1', 'in2', 'sal1', 'sal2'].forEach(function (k) { inputs[k].addEventListener('input', upd); });
+      h('div', { class: 'hint', text: 'Ex.: mobília e eletrodomésticos. Servem para ver só o gasto do dia a dia contra o orçamento.' }));
+
+    /* categorias de gastos pessoais */
+    var pc = null;
+    if (st.serverV >= 5 && conf.pcats) {
+      pc = conf.pcats.slice();
+      var usedP = {};
+      st.all.forEach(function (e) { usedP[e.c] = 1; });
+      var pcHost = h('div', { class: 'chips', style: 'flex-wrap:wrap;overflow:visible;margin-top:2px' });
+      var pcErr = h('div', { class: 'err-inline', role: 'alert' });
+      var pcIn = h('input', { type: 'text', autocomplete: 'off', maxLength: 30, placeholder: 'Nova categoria pessoal…', 'aria-label': 'Nova categoria pessoal' });
+      var drawPc = function () {
+        pcHost.textContent = '';
+        pc.forEach(function (c) {
+          var locked = !!usedP[c];
+          pcHost.append(h('button', { type: 'button', class: 'chip', 'aria-pressed': 'false', title: locked ? 'Já tem despesas: não dá para tirar' : 'Tirar', 'aria-label': locked ? c + ' (tem despesas)' : 'Tirar ' + c, disabled: false,
+            onclick: function () {
+              if (locked) { pcErr.textContent = '«' + c + '» já tem despesas, por isso não dá para a tirar.'; return; }
+              if (pc.length <= 1) { pcErr.textContent = 'Tem de ficar pelo menos uma categoria.'; return; }
+              pcErr.textContent = ''; pc = pc.filter(function (x) { return x !== c; }); drawPc();
+            } }, c + (locked ? '' : '  ✕')));
+        });
+      };
+      var addPc = function () {
+        var t = pcIn.value.trim();
+        if (!t) return;
+        if (t.length > 30) { pcErr.textContent = 'Máximo de 30 letras.'; return; }
+        if (conf.cats.some(function (c) { return same(c, t); })) { pcErr.textContent = '«' + t + '» já é uma categoria da casa.'; return; }
+        if (pc.some(function (c) { return same(c, t); })) { pcErr.textContent = 'Essa já existe.'; return; }
+        if (pc.length >= 15) { pcErr.textContent = 'No máximo 15 categorias pessoais.'; return; }
+        pcErr.textContent = ''; pc.push(t); pcIn.value = ''; drawPc();
+      };
+      pcIn.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); addPc(); } });
+      drawPc();
+      card.append(h('div', { class: 'lbl', text: 'Categorias dos gastos pessoais' }), pcHost,
+        h('div', { class: 'btn-row' }, pcIn, h('button', { type: 'button', class: 'ghost', style: 'flex:none', text: 'Juntar', onclick: addPc })), pcErr,
+        h('div', { class: 'hint', text: 'Servem para lançar os gastos de cada um (lazer, roupa…). Uma categoria com despesas não se pode tirar. Só ficam guardadas quando carregas em «Guardar».' }));
+    } else {
+      card.append(h('div', { class: 'lbl', text: 'Gastos pessoais' }),
+        h('div', { class: 'muted', text: 'Para lançar os gastos de cada um (e ver o que sobra a cada pessoa) atualiza o servidor para a versão 5: substitui o Código.gs pelo ficheiro novo e, em Implementar › Gerir implementações, lápis › «Nova versão» › Implementar.' }));
+    }
+    card.append(err, save);
+
+    ['in1', 'in2', 'sal1', 'sal2', 'bal', 'inDay'].forEach(function (k) { inputs[k].addEventListener('input', upd); });
+    ['pay1', 'pay2', 'balDate'].forEach(function (k) { inputs[k].addEventListener('change', upd); });
     upd();
     save.addEventListener('click', function () {
       if (busy) return;
       var out = {}, bad = '';
-      [['sal1', conf.p1 + ' (ordenado)'], ['sal2', conf.p2 + ' (ordenado)'], ['in1', conf.p1 + ' (entrada)'], ['in2', conf.p2 + ' (entrada)'], ['sav1', conf.p1 + ' (poupança)'], ['sav2', conf.p2 + ' (poupança)'], ['bal', 'saldo']].forEach(function (f) {
+      [['sal1', conf.p1 + ' (ordenado)'], ['sal2', conf.p2 + ' (ordenado)'], ['in1', conf.p1 + ' (entrada)'], ['in2', conf.p2 + ' (entrada)'], ['bal', 'saldo'], ['inDay', 'dia da entrada']].forEach(function (f) {
         var t = inputs[f[0]].value.trim();
         if (!t) { out[f[0]] = null; return; }
         var n = parseNum(t);
         if (!isFinite(n) || (n < 0 && f[0] !== 'bal')) { bad = bad || 'Valor inválido em ' + f[1] + '.'; return; }
+        if (f[0] === 'inDay' && (n < 1 || n > 28 || Math.floor(n) !== n)) { bad = bad || 'O dia tem de ser um número de 1 a 28.'; return; }
         out[f[0]] = Math.round(n * 100) / 100;
       });
       if (bad) { err.textContent = bad; return; }
       err.textContent = '';
-      out.balDate = out.bal === null ? null : (out.bal !== B.bal || !B.balDate ? todayStr() : B.balDate);
+      out.pay1 = +inputs.pay1.value; out.pay2 = +inputs.pay2.value;
+      out.sav1 = null; out.sav2 = null;                       // campo antigo, já não existe
+      out.balDate = out.bal === null ? null : (inputs.balDate.value || todayStr());
       out.oneoff = conf.groups.reduce(function (a, g, i) { return a + (one[g] ? Math.pow(2, i) : 0); }, 0);
+      if (pc) out.pcats = pc;
       busy = true; save.disabled = true;
       call('setBudget', [out], function (r) { busy = false; save.disabled = false; applyData(r.data); toast('Guardado ✓'); }, function (e) {
         busy = false; save.disabled = false;
-        if (e && /desconhecido/i.test(e.message || '')) toast('O servidor ainda não está na versão 4.', { err: true }); else handleErr(e);
+        if (e && /desconhecido/i.test(e.message || '')) toast('O servidor ainda não está na versão certa.', { err: true }); else handleErr(e);
       });
     });
     return card;
@@ -839,23 +1049,170 @@
     return d.month ? MONTHS[d.month - 1] + ' de ' + d.year : String(d.year);
   }
 
-  function renderDash() {
-    var root = $('#tab-dash');
-    var keepY = window.scrollY;
-    if (guard(root)) return;
-    var yrs = Calc.years(st.exp);
+  /** Resumo de agora: conta conjunta (estimada), acerto entre os dois e o que sobra a cada um. */
+  function whereCard() {
+    if (st.legacy || st.serverV < 4) return null;
+    var today = todayStr(), B = Calc.budget(st.exp, bud, conf, today), s = Calc.settle(st.exp, st.tr, conf);
+    var goSet = function () { st.setFocus = 'budget'; showTab('set'); };
+    var card = h('div', { class: 'card', id: 'whereCard' }, cardHead('Onde estão as contas', 'Agora · não depende do filtro'));
+    var row = function (title, sub, value, onclick, label) {
+      card.append(h('button', { class: 'mrow', type: 'button', onclick: onclick, 'aria-label': label || (title + ': ' + sub + (value ? ', ' + value : '')) },
+        h('span', null, h('b', { text: title }), h('br'), h('span', { class: 'muted small', text: sub })),
+        h('span', { style: 'font-weight:700;text-align:right;white-space:nowrap', text: value })));
+    };
+    if (B.est) {
+      row('Conta conjunta', 'Estimado a ' + fmtDate(today) + (B.cover !== null ? ' · cobre ' + nf1.format(B.cover) + ' meses de gasto corrente' : '') + ' · toca para acertar com o banco', '≈ ' + money0(B.est.est), openBalance);
+    } else {
+      row('Conta conjunta', 'Indica o saldo uma vez e a app estima o resto, sem andares a atualizar', 'Definir', goSet);
+    }
+    row('Acerto entre vocês', s.quits ? 'Estão quites' : s.text, s.quits ? '' : money(s.value), function () { showTab('debt'); });
+    if (personalOn()) {
+      [1, 2].forEach(function (k) {
+        var P = Calc.person(st.all, bud, conf, today, k), nm = personName(k);
+        var go = function () { st.dash.scope = k === 2 ? 'p2' : 'p1'; renderDash(); window.scrollTo(0, 0); };
+        if (P.hasInc) row(nm, 'Sobra por mês' + (P.rate !== null ? ' · ' + pct(P.rate) + ' do ordenado' : '') + (P.hasPers ? '' : ' · ainda sem gastos pessoais'), money0(P.left), go);
+        else row(nm, 'Define o ordenado e a entrada na conta conjunta para ver o que sobra', 'Definir', goSet);
+      });
+    }
+    return card;
+  }
+
+  /** Gaveta para acertar a estimativa da conta conjunta com o saldo real do banco. */
+  function openBalance() {
+    pushSheet({
+      kind: 'balance', title: 'Acertar o saldo da conta conjunta',
+      render: function (body) {
+        var today = todayStr(), est = Calc.jointEstimate(st.exp, bud, conf, today);
+        var inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0,00', 'aria-label': 'Saldo no banco' });
+        inp.value = est ? numStr(est.est) : '';
+        var err = h('div', { class: 'err-inline', role: 'alert' });
+        var save = h('button', { type: 'button', class: 'primary', text: 'Guardar saldo de hoje' });
+        body.append(h('div', { class: 'card stack' },
+          h('div', { class: 'muted', text: est ? 'A app estimou ' + money(est.est) + ' (saldo de ' + money0(est.bal) + ' a ' + fmtDate(est.balDate) + ', mais ' + est.n + (est.n === 1 ? ' entrada' : ' entradas') + ', menos ' + money0(est.spent) + ' pagos pela conta conjunta).' : 'Escreve o saldo que vês no banco.' }),
+          h('div', null, h('label', { class: 'lbl', style: 'margin-top:0', htmlFor: 'balIn' }, 'Saldo que vês no banco hoje'), h('div', { class: 'amount' }, inp, h('span', { text: '€' }))),
+          h('div', { class: 'hint', text: 'Só precisas disto de vez em quando, para corrigir diferenças (comissões, juros, algo que ficou por lançar). A estimativa continua sozinha a partir de hoje.' }),
+          err, save));
+        inp.id = 'balIn';
+        save.addEventListener('click', function () {
+          if (busy) return;
+          var v = parseNum(inp.value);
+          if (!inp.value.trim() || !isFinite(v)) { err.textContent = 'Escreve o saldo (um número).'; return; }
+          err.textContent = ''; busy = true; save.disabled = true;
+          call('setBudget', [{ bal: Math.round(v * 100) / 100, balDate: today }], function (r) {
+            busy = false; save.disabled = false; applyData(r.data); closeSheet(); toast('Saldo acertado ✓');
+          }, function (e) { busy = false; save.disabled = false; handleErr(e); });
+        });
+      }
+    });
+  }
+
+  /** Painel de uma pessoa: quanto sobra por mês e os seus gastos pessoais. */
+  function renderDashPerson(root, k, keepY) {
+    var d = st.dash, name = personName(k), today = todayStr();
+    var yrs = Calc.years(st.all);
+    var goSet = function () { st.setFocus = 'budget'; showTab('set'); };
+    var P = Calc.person(st.all, bud, conf, today, k);
+    var mine = st.pexp.filter(function (e) { return same(e.p, name); });
+    var ty = +today.slice(0, 4), tm = +today.slice(5, 7);
+
+    /* --- quanto sobra (média por mês, não depende do filtro) --- */
+    var head = h('div', { class: 'card', id: 'personCard' }, cardHead('Quanto sobra a ' + name, 'Média por mês · não depende do filtro'));
+    if (P.hasInc) {
+      var neg = P.left < -0.005;
+      head.append(h('div', { class: 'bud-big' }, h('b', { text: money0(P.left) }), ' por mês'), P.rate !== null ? h('div', { class: 'hint', style: 'margin-top:2px', text: pct(P.rate) + ' do ordenado' }) : null);
+      if (neg) head.append(h('div', { class: 'hint', style: 'color:var(--err);font-weight:600', text: '▼ Gasta mais do que entra: a sobra é negativa.' }));
+      var oop = Math.abs(P.oopAvg) >= 1 ? P.oopAvg : 0;
+      var parts = [['Conta conjunta', P.contrib, 'var(--s1)', 'o que entra todos os meses']];
+      if (oop > 0) parts.push(['Casa paga do bolso', oop, 'var(--s2)', 'a tua metade do que se pagou do bolso, depois de acertar contas']);
+      if (P.persAvg > 0.005) parts.push(['Gastos pessoais', P.persAvg, 'var(--s4)', 'média de ' + P.persN + (P.persN === 1 ? ' mês' : ' meses') + ' com gastos lançados']);
+      if (P.left > 0.005) parts.push(['Sobra', P.left, 'var(--s3)', 'fica para ti']);
+      var den = Math.max(P.income, parts.reduce(function (a, x) { return a + (x[0] === 'Sobra' ? 0 : x[1]); }, 0) + Math.max(0, P.left));
+      var thin = h('div', { class: 'thin', role: 'img', 'aria-label': 'Para onde vai o ordenado de ' + name + ': ' + parts.map(function (x) { return x[0] + ' ' + money0(x[1]); }).join(', ') });
+      parts.forEach(function (x) { if (x[1] > 0.005) thin.append(h('i', { style: 'width:' + (x[1] / den * 100) + '%;background:' + x[2] })); });
+      head.append(h('div', { class: 'lbl', text: 'Para onde vai o ordenado (média de ' + money0(P.income) + '/mês)' }), thin);
+      parts.forEach(function (x) {
+        head.append(h('div', { class: 'legend-row static' }, h('i', { class: 'swatch', style: 'background:' + x[2] }),
+          h('span', null, h('span', { class: 'nm', text: x[0] }), h('br'), h('span', { class: 'sb', text: x[3] })), h('span', { class: 'vl', text: money0(x[1]) })));
+      });
+      if (!P.hasPers) head.append(h('div', { class: 'hint', text: 'Ainda não há gastos pessoais lançados: isto é o máximo que podias poupar. Lança-os no separador Adicionar (Pessoal) ou o mês de uma vez.' }));
+      else head.append(h('div', { class: 'hint', text: 'Só conta o que está lançado. As compras pontuais da casa (mobília…) ficam de fora, como no orçamento.' }));
+      head.append(h('div', { class: 'hint', text: 'Ordenado médio: ' + money0(P.sal) + (P.pay === 14 ? ' × 14 ÷ 12' : '') + '. Podes mudar em Definições.' }));
+    } else {
+      head.append(h('p', { class: 'muted', style: 'margin:0 0 6px', text: 'Diz o ordenado de ' + name + ' e quanto entra por mês na conta conjunta, e a app mostra quanto sobra depois dos gastos pessoais.' }),
+        h('button', { type: 'button', class: 'ghost block', text: 'Definir ordenado e entrada', onclick: goSet }));
+      if (P.hasPers) head.append(h('div', { class: 'kv' }, h('div', { class: 'kv-r' }, h('span', null, h('span', { class: 'kv-l', text: 'Gastos pessoais por mês' }), h('span', { class: 'kv-s', text: 'média de ' + P.persN + (P.persN === 1 ? ' mês' : ' meses') }))), h('b', { text: money0(P.persAvg) })));
+    }
+    root.append(head);
+
+    /* --- mês a mês --- */
+    var shown = P.months.slice(-6).reverse();
+    if (shown.length) {
+      var maxV = Math.max.apply(null, [1, P.persAvg].concat(shown.map(function (x) { return x.pers; })));
+      var mm = h('div', { class: 'card' }, cardHead('Gastos pessoais mês a mês', 'Os últimos meses com gastos · o traço é a média'));
+      var bl = h('div', { class: 'bm-list' });
+      shown.forEach(function (x) {
+        bl.append(h('button', { type: 'button', class: 'bm', 'aria-label': cap(MONTHS[x.m - 1]) + ' de ' + x.y + ': ' + money0(x.pers) + (x.current ? ' (mês a decorrer)' : '') + '. Ver despesas',
+          onclick: function () { openList('Gastos de ' + name + ' · ' + MONTHS[x.m - 1] + ' de ' + x.y, function (e) { return e.y === x.y && e.m === x.m && same(e.p, name); }, st.pexp); } },
+          h('span', { class: 'bm-l', text: cap(MS[x.m - 1]) + (x.y !== ty ? ' ' + String(x.y).slice(2) : '') }),
+          h('span', { class: 'bm-track' }, h('i', { style: 'width:' + (Math.max(0, x.pers) / maxV * 100) + '%;background:var(--s4)' }), h('s', { style: 'left:' + (P.persAvg / maxV * 100) + '%' })),
+          h('span', { class: 'bm-v', text: money0(x.pers) })));
+      });
+      mm.append(bl);
+      if (P.hasInc) {
+        var tbl = h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' },
+          h('thead', null, h('tr', null, ['Mês', 'Pessoais', 'Casa', 'Sobra'].map(function (t) { return h('th', { scope: 'col', text: t }); }))),
+          h('tbody', null, shown.map(function (x) {
+            return h('tr', null, h('td', { text: cap(MS[x.m - 1]) + (x.y !== ty ? ' ' + String(x.y).slice(2) : '') + (x.current ? ' *' : '') }), h('td', { text: money0(x.pers) }), h('td', { text: money0(P.contrib + x.oop) }), h('td', { class: 'k', text: money0(x.left) }));
+          }))));
+        mm.append(h('details', null, h('summary', { text: 'Ver a sobra de cada mês' }), tbl,
+          h('p', { class: 'hint', text: '«Casa» = entrada na conta conjunta + a tua parte do que se pagou do bolso nesse mês. * = mês a decorrer (os gastos pessoais podem estar incompletos).' })));
+      }
+      root.append(mm);
+    }
+
+    /* --- por categoria (período escolhido) --- */
     if (!yrs.length) { root.append(h('div', { class: 'card empty', text: 'Ainda não há despesas com data para analisar.' })); return; }
+    dashFilters(root, yrs);
+    var inP = function (e) { return Calc.inPeriod(e, d.year, d.month); };
+    var list = mine.filter(inP), total = Calc.sum(list);
+    var cats = Calc.byCategory(list, { cats: conf.pcats, catGroups: {} }).sort(function (a, b) { return b.total - a.total; });
+    var catCard = h('div', { class: 'card' }, cardHead('Gastos pessoais de ' + name, cap(periodName()) + ' · ' + money(total)));
+    if (!cats.length) catCard.append(h('div', { class: 'empty', text: 'Sem gastos pessoais lançados neste período.' }));
+    rankList(cats.map(function (c) {
+      return {
+        name: c.name, total: c.total, color: 'var(--s4)',
+        onclick: function () { openList(c.name + ' · ' + name + ' · ' + periodName(), function (e) { return inP(e) && same(e.p, name) && (c.other ? conf.pcats.indexOf(e.c) < 0 : e.c === c.name); }, st.pexp); }
+      };
+    }), total).forEach(function (r) { catCard.append(r); });
+    catCard.append(h('button', { type: 'button', class: 'ghost block', text: 'Lançar o mês de uma vez', onclick: function () { openBatch(); } }));
+    root.append(catCard);
+
+    var big = list.slice().sort(function (a, b) { return b.v - a.v; }).slice(0, 5);
+    if (big.length) {
+      var bigCard = h('div', { class: 'card' }, cardHead('Maiores gastos pessoais', cap(periodName())));
+      big.forEach(function (e) { bigCard.append(expRow(e)); });
+      root.append(bigCard);
+    }
+    var sc = $('.chips', root), on = sc && $('[aria-pressed="true"]', sc);
+    if (on) sc.scrollLeft = on.offsetLeft - sc.clientWidth / 2 + on.offsetWidth / 2;
+    window.scrollTo(0, keepY);
+  }
+
+  /** Escolher o que ver: a casa ou o que é de cada pessoa. */
+  function scopeBar() {
+    var d = st.dash, names = ['Casa', conf.p1, conf.p2];
+    var cur = d.scope === 'p1' ? conf.p1 : d.scope === 'p2' ? conf.p2 : 'Casa';
+    var c = segCtl('scope', names, cur, function (v) { d.scope = v === conf.p1 ? 'p1' : v === conf.p2 ? 'p2' : 'house'; renderDash(); });
+    return h('div', { class: 'scope' }, c.el);
+  }
+
+  /** Ano por omissão e linha de filtros (ano + meses), iguais para a casa e para cada pessoa. */
+  function dashFilters(root, yrs) {
     var d = st.dash;
     if (d.year == null || (d.year !== 'all' && yrs.indexOf(d.year) < 0)) {
       var cy = new Date().getFullYear();
       d.year = yrs.indexOf(cy) >= 0 ? cy : yrs[0]; d.month = 0;
     }
-    var inP = function (e) { return Calc.inPeriod(e, d.year, d.month); };
-    var list = st.exp.filter(inP);
-    var yearList = Calc.filterPeriod(st.exp, d.year, 0);
-    var total = Calc.sum(list);
-
-    /* --- filtros: uma linha por cima de tudo --- */
     var sel = h('select', { 'aria-label': 'Ano', onchange: function (ev) { d.year = ev.target.value === 'all' ? 'all' : +ev.target.value; d.month = 0; renderDash(); } });
     yrs.forEach(function (y) { sel.append(h('option', { value: y, text: String(y) })); });
     sel.append(h('option', { value: 'all', text: 'Tudo' }));
@@ -868,6 +1225,25 @@
       })(m);
     }
     root.append(h('div', { class: 'filters' }, h('div', { class: 'filters-in' }, sel, chips)));
+  }
+
+  function renderDash() {
+    var root = $('#tab-dash');
+    var keepY = window.scrollY;
+    if (guard(root)) return;
+    var d = st.dash;
+    if (!personalOn()) d.scope = 'house';
+    if (personalOn()) root.append(scopeBar());
+    if (d.scope !== 'house') { renderDashPerson(root, d.scope === 'p2' ? 2 : 1, keepY); return; }
+    var wc = whereCard();
+    if (wc) root.append(wc);
+    var yrs = Calc.years(st.exp);
+    if (!yrs.length) { root.append(h('div', { class: 'card empty', text: 'Ainda não há despesas da casa com data para analisar.' })); return; }
+    var inP = function (e) { return Calc.inPeriod(e, d.year, d.month); };
+    dashFilters(root, yrs);
+    var list = st.exp.filter(inP);
+    var yearList = Calc.filterPeriod(st.exp, d.year, 0);
+    var total = Calc.sum(list);
 
     /* --- números principais --- */
     var heroSub = list.length + (list.length === 1 ? ' despesa' : ' despesas');
@@ -1227,7 +1603,9 @@
 
   function listFiltered() {
     var f = st.list, q = f.q.trim().toLowerCase();
-    return st.exp.filter(function (e) {
+    return st.all.filter(function (e) {
+      if (f.kind === 'house' && isPers(e.c) && Calc.isPersonal(e, conf)) return false;
+      if (f.kind === 'personal' && !Calc.isPersonal(e, conf)) return false;
       if (f.year !== 'all' && e.y !== f.year) return false;
       if (f.month && e.m !== f.month) return false;
       if (f.cat && e.c !== f.cat) return false;
@@ -1245,8 +1623,8 @@
   function renderList() {
     var root = $('#tab-list');
     if (st.legacy || !st.loaded) { listSig = ''; guard(root); return; }
-    var yrs = Calc.years(st.exp);
-    var sig = JSON.stringify([yrs, conf.cats, conf.p1, conf.p2, conf.joint]);
+    var yrs = Calc.years(st.all);
+    var sig = JSON.stringify([yrs, conf.cats, conf.pcats, personalOn(), conf.p1, conf.p2, conf.joint]);
     if (sig !== listSig) {
       listSig = sig;
       root.textContent = '';
@@ -1262,11 +1640,14 @@
       };
       var selYear = mk('Ano', [['all', 'Todos os anos']].concat(yrs.map(function (y) { return [String(y), String(y)]; })), f.year, function (v) { f.year = v === 'all' ? 'all' : +v; });
       var selMonth = mk('Mês', [['0', 'Ano todo']].concat(MONTHS.map(function (m, i) { return [String(i + 1), cap(m)]; })), f.month, function (v) { f.month = +v; });
-      var selCat = mk('Categoria', [['', 'Todas as categorias']].concat(conf.cats.map(function (c) { return [c, c]; })), f.cat, function (v) { f.cat = v; });
+      var allCats = conf.cats.concat(personalOn() ? conf.pcats : []);
+      var selCat = mk('Categoria', [['', 'Todas as categorias']].concat(allCats.map(function (c) { return [c, c]; })), f.cat, function (v) { f.cat = v; });
+      var selKind = personalOn() ? mk('Tipo', [['', 'Casa e pessoais'], ['house', 'Só da casa'], ['personal', 'Só pessoais']], f.kind, function (v) { f.kind = v; }) : null;
       var selPay = mk('Quem pagou', [['', 'Quem pagou: todos'], ['joint', conf.joint], ['p1', conf.p1], ['p2', conf.p2]], f.payer, function (v) { f.payer = v; });
       selCat.style.gridColumn = '1 / -1'; selPay.style.gridColumn = '1 / -1';
+      if (selKind) selKind.style.gridColumn = '1 / -1';
       root.append(h('div', { class: 'card' }, q,
-        h('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px' }, selYear, selMonth, selCat, selPay)),
+        h('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px' }, selYear, selMonth, selKind, selCat, selPay)),
         h('div', { id: 'listRes' }));
     }
     renderListResults();
@@ -1311,9 +1692,13 @@
     });
     var file = h('input', { type: 'file', accept: 'image/*', hidden: true });
     file.addEventListener('change', function () { if (file.files && file.files[0]) pickPhoto(file.files[0]); });
+    var meCtl = conf ? segCtl('me', [conf.p1, conf.p2], ui.me === 'p2' ? conf.p2 : (ui.me === 'p1' ? conf.p1 : ''), function (v) {
+      ui.me = same(v, conf.p2) ? 'p2' : 'p1'; lsSet(UIKEY, ui); addSig = ''; toast('Este telemóvel é de ' + v + ' ✓');
+    }) : null;
     root.append(h('div', { class: 'card stack' },
       cardHead('Aspeto', 'Só muda neste telemóvel'),
-      h('div', { class: 'lbl', style: 'margin-top:0', text: 'Tema' }), themeCtl.el,
+      meCtl ? h('div', null, h('div', { class: 'lbl', style: 'margin-top:0', text: 'De quem é este telemóvel' }), meCtl.el, h('div', { class: 'hint', text: 'Serve só para a app abrir os gastos pessoais já com o teu nome.' })) : null,
+      h('div', { class: 'lbl', text: 'Tema' }), themeCtl.el,
       h('div', { class: 'lbl', text: 'Cor de destaque' }), sw,
       h('div', { class: 'lbl', text: 'Foto de fundo' }),
       h('div', { class: 'btn-row', style: 'margin-top:0' },
@@ -1326,7 +1711,7 @@
     if (st.legacy) {
       srv.append(h('div', { class: 'muted', text: 'Para ter o painel, as dívidas e a edição: abre o Apps Script da folha, substitui o conteúdo de Código.gs pelo ficheiro novo, e em Implementar › Gerir implementações escolhe o lápis, «Nova versão» e Implementar. O endereço e o código mantêm-se e nenhum telemóvel precisa de ser ligado outra vez.' }));
     } else {
-      srv.append(h('div', { class: 'muted', text: st.serverV < 4 ? 'Funciona, mas há uma versão mais nova (4) com orçamento e poupança. Para a ter, segue os passos do cartão «Orçamento e poupança».' : 'Tudo certo: a app lê e escreve diretamente na folha de cálculo.' }));
+      srv.append(h('div', { class: 'muted', text: st.serverV < 5 ? 'Funciona, mas há uma versão mais nova (5) com gastos pessoais e o que sobra a cada um. Para a ter, segue os passos do cartão «Dinheiro e poupança».' : 'Tudo certo: a app lê e escreve diretamente na folha de cálculo.' }));
     }
     srv.append(confirmBtn('Desligar este telemóvel', 'Toca outra vez para confirmar', function () { showSetup('Telemóvel desligado.'); }, 'ghost block'));
     root.append(srv);
