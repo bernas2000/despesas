@@ -1,6 +1,8 @@
 /* Cálculos da app (sem interface). Espelham as fórmulas do Excel:
  *  - totais por categoria / grupo / divisão da casa e média mensal («só meses com gasto»)
  *  - acerto de contas: pago do bolso + parte da conta conjunta − parte de cada um ± transferências
+ *    (a conta conjunta é dos dois: pagar por ela não cria dívida, seja qual for o valor que cada um deposita)
+ *  - orçamento: gasto corrente vs. o que entra por mês na conta conjunta, e indicadores de poupança
  * Também corre em Node (testes) para comparar com os valores do Excel. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -8,7 +10,8 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var r2 = function (v) { return Math.round(v * 100) / 100; };
+  // «meio cêntimo para cima» sem erros de vírgula flutuante (368,075 → 368,08, como o Excel)
+  var r2 = function (v) { return (v < 0 ? -1 : 1) * Math.round((Math.abs(v) + 1e-9) * 100) / 100; };
   var sum = function (list) { var t = 0; for (var i = 0; i < list.length; i++) t += list[i].v; return t; };
   // O Excel (SUMIFS) ignora maiúsculas/minúsculas; fazemos o mesmo.
   var same = function (a, b) { return !!b && String(a || '').toLowerCase() === String(b).toLowerCase(); };
@@ -138,8 +141,10 @@
     var only1 = sum(exp.filter(function (e) { return same(e.x, cfg.splitP1); }));
     var only2 = sum(exp.filter(function (e) { return same(e.x, cfg.splitP2); }));
     var shared = total - only1 - only2;
-    var f1 = cfg.fund1, q1 = cfg.pct1;
-    var jp1 = joint * f1, jp2 = joint * (1 - f1);
+    // A conta conjunta é dos dois: a parte de cada um nela é a mesma quota das despesas partilhadas,
+    // por isso pagar pela conta conjunta nunca cria dívida (quanto cada um deposita não conta aqui).
+    var q1 = cfg.pct1;
+    var jp1 = joint * q1, jp2 = joint * (1 - q1);
     var paid1 = d1 + jp1, paid2 = d2 + jp2;
     var part1 = only1 + shared * q1, part2 = only2 + shared * (1 - q1);
     var diff1 = paid1 - part1, diff2 = paid2 - part2;
@@ -174,13 +179,82 @@
     var only2 = sum(l.filter(function (e) { return same(e.x, cfg.splitP2); }));
     var joint = total - d1 - d2;
     var part1 = only1 + (total - only1 - only2) * cfg.pct1;
-    return { total: total, count: l.length, net1: d1 + joint * cfg.fund1 - part1 };
+    return { total: total, count: l.length, net1: d1 + joint * cfg.pct1 - part1 };
+  }
+
+  /* ---------- orçamento e poupança ---------- */
+
+  function daysIn(y, m) { return new Date(y, m, 0).getDate(); }
+
+  /** Grupos tratados como «compras pontuais» (mobília…): ficam fora do orçamento mensal corrente.
+   *  bud.oneoff = máscara de bits sobre cfg.groups; sem valor guardado, usa os grupos com «mob» no nome. */
+  function oneoffGroups(cfg, bud) {
+    var m = bud && typeof bud.oneoff === 'number' ? bud.oneoff : null;
+    return cfg.groups.filter(function (g, i) {
+      return m === null ? /mob/i.test(g) : ((m >> i) & 1) === 1;
+    });
+  }
+
+  /**
+   * Indicadores do orçamento. today = 'aaaa-mm-dd'.
+   *  - só conta o gasto «corrente» (fora das compras pontuais);
+   *  - médias: meses completos com gasto (se ainda não houver, usa os que existirem).
+   */
+  function budget(exp, bud, cfg, today) {
+    bud = bud || {};
+    var num = function (k) { var v = bud[k]; return typeof v === 'number' && isFinite(v) ? v : null; };
+    var in1 = num('in1'), in2 = num('in2'), sal1 = num('sal1'), sal2 = num('sal2'), sav1 = num('sav1'), sav2 = num('sav2'), bal = num('bal');
+    var monthly = (in1 || 0) + (in2 || 0);
+    var oneoff = oneoffGroups(cfg, bud);
+    var isOne = function (e) { return oneoff.indexOf(groupOf(cfg, e.c)) >= 0; };
+    var run = exp.filter(function (e) { return e.y && !isOne(e); });
+    var one = exp.filter(function (e) { return e.y && isOne(e); });
+    var ty = +today.slice(0, 4), tm = +today.slice(5, 7), td = +today.slice(8, 10);
+    var curKey = ty * 100 + tm;
+
+    var by = {};
+    run.forEach(function (e) { var k = e.y * 100 + e.m; by[k] = (by[k] || 0) + e.v; });
+    // só meses que já começaram (despesas com data futura não entram nos indicadores)
+    var months = Object.keys(by).map(Number).filter(function (k) { return k <= curKey; }).sort(function (a, b) { return a - b; }).map(function (k) {
+      return { key: k, y: Math.floor(k / 100), m: k % 100, v: by[k], over: monthly > 0 && by[k] > monthly + 0.005, current: k === curKey };
+    });
+    var spentNow = by[curKey] || 0;
+    var oneNow = sum(one.filter(function (e) { return e.y === ty && e.m === tm; }));
+    var base = months.filter(function (x) { return x.key < curKey && x.v > 0; });
+    if (!base.length) base = months.filter(function (x) { return x.v > 0; });
+    var avg = base.length ? base.reduce(function (a, x) { return a + x.v; }, 0) / base.length : 0;
+
+    var dayFrac = td / daysIn(ty, tm);
+    var status = null;
+    if (monthly > 0) status = spentNow > monthly + 0.005 ? 'over' : (spentNow > monthly * dayFrac + 0.005 ? 'pace' : 'ok');
+
+    var hasSal = sal1 !== null && sal2 !== null && sal1 + sal2 > 0;
+    var income = hasSal ? sal1 + sal2 : null;
+    var hasSav = hasSal && sav1 !== null && sav2 !== null;
+    var saveTotal = hasSav ? sav1 + sav2 : null;
+    return {
+      has: monthly > 0, monthly: monthly, in1: in1, in2: in2,
+      share: monthly > 0 && in1 !== null && in2 !== null ? [in1 / monthly, in2 / monthly] : null,
+      oneoff: oneoff, months: months, spentNow: spentNow, oneNow: oneNow, left: monthly - spentNow,
+      used: monthly > 0 ? spentNow / monthly : null, dayFrac: dayFrac, status: status,
+      avg: avg, avgN: base.length, overCount: months.filter(function (x) { return x.over && x.key < curKey; }).length,
+      doneMonths: months.filter(function (x) { return x.key < curKey; }).length,
+      hasSal: hasSal, income: income,
+      incShare: hasSal ? [sal1 / income, sal2 / income] : null,
+      fair: hasSal && monthly > 0 ? [monthly * sal1 / income, monthly * sal2 / income] : null,
+      inPct: hasSal && in1 !== null && in2 !== null ? [sal1 > 0 ? in1 / sal1 : null, sal2 > 0 ? in2 / sal2 : null] : null,
+      homeRate: hasSal && monthly > 0 ? monthly / income : null,
+      hasSav: hasSav, saveTotal: saveTotal, saveRate: hasSav ? saveTotal / income : null,
+      freeTotal: hasSav && monthly > 0 ? income - monthly - saveTotal : null,
+      bal: bal, balDate: typeof bud.balDate === 'string' ? bud.balDate : '',
+      cover: bal !== null && avg > 0 ? bal / avg : null
+    };
   }
 
   return {
     r2: r2, sum: sum, same: same, prep: prep, inPeriod: inPeriod, filterPeriod: filterPeriod, years: years,
     avgPerMonth: avgPerMonth, monthsWithSpend: monthsWithSpend, groupOf: groupOf,
     byCategory: byCategory, byGroup: byGroup, byRoom: byRoom, series: series, catSeries: catSeries,
-    payerSplit: payerSplit, settle: settle, settleMonth: settleMonth
+    payerSplit: payerSplit, settle: settle, settleMonth: settleMonth, oneoffGroups: oneoffGroups, budget: budget
   };
 });

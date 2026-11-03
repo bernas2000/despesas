@@ -2,7 +2,7 @@
 // Vai sempre à rede primeiro (com revalidação), por isso uma atualização no GitHub chega
 // aos telemóveis na abertura seguinte, sem ninguém mexer nada.
 // Os dados (despesas) vêm sempre do servidor; não há gravação offline.
-const CACHE = 'despesas-v3';
+const CACHE = 'despesas-v4';
 const ASSETS = ['./', './index.html', './app.css', './calc.js', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

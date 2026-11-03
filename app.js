@@ -21,6 +21,7 @@
 
   var CFG = null;     // ligação: { u: endereço do servidor, t: código }
   var conf = null;    // configuração da folha (categorias, pessoas, quotas…)
+  var bud = {};       // orçamento e poupança (folha «Orçamento»)
   var st = {
     exp: [], tr: [], loaded: false, legacy: false, serverV: 0, fetchedAt: 0, loadErr: '', tab: 'add',
     dash: { year: null, month: 0, evo: null, slots: {}, tableA: false, tableE: false, allCats: false },
@@ -58,6 +59,7 @@
 
   var nf2 = new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
   var nf0 = new Intl.NumberFormat('pt-PT', { maximumFractionDigits: 0, useGrouping: 'always' });
+  var nf1 = new Intl.NumberFormat('pt-PT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   function z(v) { return Math.abs(v) < 0.005 ? 0 : v; }
   // Arredonda «meio cêntimo para cima» sem erros de vírgula flutuante (368,075 → 368,08, nos dois sinais).
   function rnd(v, k) { return (v < 0 ? -1 : 1) * Math.round((Math.abs(v) + 1e-9) * k) / k; }
@@ -134,7 +136,7 @@
   /* ====================== dados ====================== */
 
   function applyData(d, fromCache) {
-    conf = d.cfg;
+    conf = d.cfg; bud = d.bud || {};
     st.exp = Calc.prep(d.exp);
     st.tr = d.tr.slice();
     st.loaded = true; st.legacy = false; st.serverV = d.v || 3; st.loadErr = '';
@@ -165,7 +167,7 @@
   // Servidor antigo (sem getAll): só dá para adicionar despesas até ser atualizado.
   function legacyInit() {
     return api('getInit').then(function (c) {
-      conf = c; st.legacy = true; st.loaded = false;
+      conf = c; bud = {}; st.legacy = true; st.loaded = false;
       showBanner('O servidor (Code.gs) ainda é a versão antiga. Podes adicionar despesas, mas o painel, as dívidas e a edição só aparecem depois de o atualizares (ver Definições).');
       renderAll();
     }, function (e) {
@@ -180,7 +182,7 @@
 
   function showSetup(msg) {
     CFG = null; lsDel(STORE); lsDel(CACHE);
-    conf = null; st.loaded = false; st.exp = []; st.tr = [];
+    conf = null; bud = {}; st.loaded = false; st.exp = []; st.tr = [];
     $('#app').hidden = true; $('#nav').hidden = true; $('#setup').hidden = false;
     document.body.classList.add('setup-mode');
     $('#sErr').textContent = msg || '';
@@ -644,6 +646,191 @@
     return h('div', { class: 'card-h' }, h('div', null, h('div', { class: 'card-t', text: title }), sub ? h('div', { class: 'card-sub', text: sub }) : null), actions || null);
   }
 
+  /* ====================== ORÇAMENTO E POUPANÇA ====================== */
+
+  /** Texto com *negrito* (partes entre asteriscos). */
+  function rich(str, tag) {
+    var p = h(tag || 'p');
+    String(str).split('*').forEach(function (t, i) { if (t) p.append(i % 2 ? h('b', { text: t }) : document.createTextNode(t)); });
+    return p;
+  }
+
+  /** Explicação das dívidas em frases curtas (a tabela fica escondida por baixo). */
+  function debtStory(s) {
+    var R = s.rows, p1 = conf.p1, p2 = conf.p2, m = money, items = [];
+    var joint = conf.joint.toLowerCase();
+    var l1 = 'Do bolso, *' + p1 + '* pagou *' + m(R.direct[0]) + '* e *' + p2 + '* pagou *' + m(R.direct[1]) + '*.';
+    if (s.joint > 0.005) l1 += ' A ' + joint + ' pagou *' + m(s.joint) + '*: é dos dois, por isso não cria dívida.';
+    items.push(l1);
+    var only = [];
+    if (R.only[0] > 0.005) only.push('*' + m(R.only[0]) + '* só de ' + p1);
+    if (R.only[1] > 0.005) only.push('*' + m(R.only[1]) + '* só de ' + p2);
+    if (only.length) items.push('Há despesas que são só de um deles (' + only.join(' e ') + '): cada um paga as suas.');
+    var d1 = R.diff[0];
+    items.push('Contando só as despesas, ' + (Math.abs(d1) < 0.005 ? 'estão quites.' : '*' + (d1 > 0 ? p2 : p1) + '* deve *' + m(Math.abs(d1)) + '* a ' + (d1 > 0 ? p1 : p2) + '.'));
+    var tr = [];
+    if (R.sent[0] > 0.005) tr.push('*' + p1 + '* enviou *' + m(R.sent[0]) + '* a ' + p2);
+    if (R.recv[0] > 0.005) tr.push('*' + p2 + '* enviou *' + m(R.recv[0]) + '* a ' + p1);
+    if (tr.length) items.push('Já fizeram transferências: ' + tr.join(' e ') + '.');
+    items.push('Por isso: ' + (s.quits ? '*estão quites*.' : '*' + s.text + ' ' + m(s.value) + '*.'));
+    return h('div', { class: 'story' }, items.map(function (t) { return rich(t); }));
+  }
+
+  /** Cartão do Painel: gasto corrente vs. orçamento, poupança e conta conjunta. */
+  function budgetCard() {
+    if (st.legacy || st.serverV < 4) return null;
+    var today = todayStr(), B = Calc.budget(st.exp, bud, conf, today);
+    var goSet = function () { st.setFocus = 'budget'; showTab('set'); };
+    if (!B.has) {
+      return h('div', { class: 'card' }, cardHead('Orçamento da casa', 'Opcional'),
+        h('p', { class: 'muted', style: 'margin:0 0 6px', text: 'Diz quanto entra por mês na conta conjunta e a app mostra se estão dentro do previsto, e quanto sobra para poupar.' }),
+        h('button', { type: 'button', class: 'ghost block', text: 'Definir orçamento', onclick: goSet }));
+    }
+    var oneoff = B.oneoff;
+    var isRun = function (e) { return oneoff.indexOf(Calc.groupOf(conf, e.c)) < 0; };
+    var ty = +today.slice(0, 4), tm = +today.slice(5, 7);
+    var card = h('div', { class: 'card', id: 'budgetCard' },
+      cardHead('Orçamento da casa', 'Mês atual e últimos meses · não depende do filtro', h('button', { type: 'button', class: 'ghost sm', text: 'Ajustar', onclick: goSet })));
+
+    /* este mês */
+    var col = B.status === 'over' ? 'var(--err)' : 'var(--accent)';
+    var msg = B.status === 'over' ? 'Passaram o orçamento em *' + money0(-B.left) + '*.'
+      : B.status === 'pace' ? 'A gastar mais depressa do que o previsto para esta altura do mês, mas ainda dentro do orçamento (faltam *' + money0(B.left) + '*).'
+      : 'Dentro do ritmo: faltam *' + money0(B.left) + '* até ao orçamento.';
+    card.append(h('div', { class: 'lbl', style: 'margin-top:6px', text: 'Este mês · ' + MONTHS[tm - 1] }),
+      h('div', { class: 'bud-big' }, h('b', { text: money0(B.spentNow) }), ' de ' + money0(B.monthly)),
+      h('div', { class: 'meter', role: 'img', 'aria-label': money0(B.spentNow) + ' de ' + money0(B.monthly) + ' do orçamento deste mês' },
+        h('i', { style: 'width:' + Math.min(100, B.used * 100) + '%;background:' + col }), h('s', { style: 'left:' + (B.dayFrac * 100) + '%' })),
+      rich(msg, 'div'),
+      h('div', { class: 'hint', text: 'O traço marca o ritmo certo para esta altura do mês.' + (B.oneNow > 0.005 ? ' Fora disto, ' + money0(B.oneNow) + ' em compras pontuais (' + oneoff.join(', ') + ') que não contam.' : '') }),
+      h('button', { type: 'button', class: 'kpi-go link', text: 'Ver as despesas do mês ›', onclick: function () { openList('Gasto corrente · ' + MONTHS[tm - 1], function (e) { return e.y === ty && e.m === tm && isRun(e); }); } }));
+
+    /* mês a mês */
+    var shown = B.months.slice(-6).reverse();
+    if (shown.length) {
+      var maxV = Math.max.apply(null, [B.monthly].concat(shown.map(function (x) { return x.v; })));
+      var list = h('div', { class: 'bm-list' });
+      shown.forEach(function (x) {
+        list.append(h('button', { type: 'button', class: 'bm', 'aria-label': cap(MONTHS[x.m - 1]) + ' de ' + x.y + ': ' + money0(x.v) + (x.over ? ', acima do orçamento' : '') + '. Ver despesas',
+          onclick: function () { openList('Gasto corrente · ' + MONTHS[x.m - 1] + ' de ' + x.y, function (e) { return e.y === x.y && e.m === x.m && isRun(e); }); } },
+          h('span', { class: 'bm-l', text: cap(MS[x.m - 1]) + (x.y !== ty ? ' ' + String(x.y).slice(2) : '') }),
+          h('span', { class: 'bm-track' }, h('i', { style: 'width:' + (x.v / maxV * 100) + '%;background:' + (x.over ? 'var(--err)' : 'var(--accent)') }), h('s', { style: 'left:' + (B.monthly / maxV * 100) + '%' })),
+          h('span', { class: 'bm-v', text: money0(x.v) + (x.over ? ' ▲' : '') })));
+      });
+      card.append(h('div', { class: 'lbl', text: 'Mês a mês' }), list, h('div', { class: 'hint', text: 'O traço é o orçamento (' + money0(B.monthly) + '). ▲ = acima. Compras pontuais não entram.' }));
+    }
+
+    /* números-chave */
+    var kv = h('div', { class: 'kv' });
+    var row = function (l, v, sub) { kv.append(h('div', { class: 'kv-r' }, h('span', null, h('span', { class: 'kv-l', text: l }), sub ? h('span', { class: 'kv-s', text: sub }) : null), h('b', { text: v }))); };
+    if (B.avgN) {
+      var gap = B.monthly - B.avg;
+      row('Média mensal corrente', money0(B.avg), B.avgN + (B.avgN === 1 ? ' mês' : ' meses') + ' · ' + pct(B.avg / B.monthly) + ' do orçamento · ' + (gap >= 0 ? 'sobram ' + money0(gap) : 'faltam ' + money0(-gap)) + ' por mês');
+    }
+    if (B.doneMonths) row('Meses acima do orçamento', B.overCount + ' de ' + B.doneMonths, 'só meses já acabados');
+    if (B.bal !== null) {
+      row('Saldo da conta conjunta', money0(B.bal), (B.balDate ? 'a ' + fmtDate(B.balDate) : '') + (B.cover !== null ? ' · cobre ' + nf1.format(B.cover) + ' meses de gasto corrente' : ''));
+      if (B.avg > 0) row('Colchão de segurança', money0(B.avg) + ' a ' + money0(B.avg * 2), '1 a 2 meses de gasto corrente médio');
+    }
+    if (kv.childNodes.length) card.append(h('div', { class: 'lbl', text: 'Em resumo' }), kv);
+
+    /* rendimento */
+    if (B.hasSal) {
+      var inc = B.income, seg = [['Casa (conta conjunta)', B.monthly, 'var(--s1)']];
+      if (B.hasSav) { seg.push(['Poupança', B.saveTotal, 'var(--s3)']); seg.push(['Livre para gastos pessoais', Math.max(0, B.freeTotal), 'var(--gray)']); }
+      else seg.push(['Resto (poupança e gastos pessoais)', Math.max(0, inc - B.monthly), 'var(--gray)']);
+      var thin = h('div', { class: 'thin', role: 'img', 'aria-label': 'Para onde vai o rendimento: ' + seg.map(function (x) { return x[0] + ' ' + pct(x[1] / inc); }).join(', ') });
+      seg.forEach(function (x) { if (x[1] > 0) thin.append(h('i', { style: 'width:' + (x[1] / inc * 100) + '%;background:' + x[2] })); });
+      card.append(h('div', { class: 'lbl', text: 'Para onde vai o rendimento (' + money0(inc) + '/mês)' }), thin);
+      seg.forEach(function (x) {
+        card.append(h('div', { class: 'legend-row static' }, h('i', { class: 'swatch', style: 'background:' + x[2] }),
+          h('span', null, h('span', { class: 'nm', text: x[0] }), h('br'), h('span', { class: 'sb', text: pct(x[1] / inc) + ' do rendimento' })), h('span', { class: 'vl', text: money0(x[1]) })));
+      });
+      var notes = [];
+      if (B.share) {
+        var df = B.share[0] - B.incShare[0];
+        notes.push(Math.abs(df) <= 0.03
+          ? 'Entram ' + pct(B.share[0]) + ' / ' + pct(B.share[1]) + ' (' + conf.p1 + ' / ' + conf.p2 + ') e os ordenados são ' + pct(B.incShare[0]) + ' / ' + pct(B.incShare[1]) + ': proporcional ✓.'
+          : (df > 0 ? conf.p1 : conf.p2) + ' mete ' + Math.round(Math.abs(df) * 100) + ' pontos a mais do que a proporção do ordenado (seria ' + money0(B.fair[0]) + ' e ' + money0(B.fair[1]) + ').');
+      }
+      if (B.hasSav) notes.push('Poupança: ' + pct(B.saveRate) + ' do rendimento. A regra 50/30/20 (só um guia) aponta para cerca de 20%.');
+      notes.push('Só contam as despesas registadas aqui: gastos pessoais fora da casa não entram.');
+      notes.forEach(function (t) { card.append(h('div', { class: 'hint', text: t })); });
+    }
+    return card;
+  }
+
+  /** Definições: ordenados, entrada na conta conjunta, poupança, saldo e compras pontuais. */
+  function budgetSettingsCard() {
+    var card = h('div', { class: 'card stack', id: 'budCard' }, cardHead('Orçamento e poupança', 'Opcional · igual nos dois telemóveis'));
+    if (st.legacy || st.serverV < 4) {
+      card.append(h('div', { class: 'muted', text: 'Precisa do servidor na versão 4. Abre o Apps Script da folha, substitui o conteúdo de Código.gs pelo ficheiro novo e, em Implementar › Gerir implementações, escolhe o lápis, «Nova versão» e Implementar. O endereço e o código mantêm-se.' }));
+      return card;
+    }
+    var B = bud || {};
+    var inputs = {};
+    var fld = function (key, name) {
+      var inp = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '—', 'aria-label': name });
+      inp.value = typeof B[key] === 'number' ? numStr(B[key]) : '';
+      inputs[key] = inp;
+      return h('div', { class: 'fld' }, h('span', { class: 'fl', text: name }), h('div', { class: 'amt-sm' }, inp, h('span', { text: '€' })));
+    };
+    var pair = function (k1, k2) { return h('div', { class: 'pair' }, fld(k1, conf.p1), fld(k2, conf.p2)); };
+    var live = h('div', { class: 'hint' });
+    var upd = function () {
+      var a = parseNum(inputs.in1.value), b = parseNum(inputs.in2.value), s1 = parseNum(inputs.sal1.value), s2 = parseNum(inputs.sal2.value), t = '';
+      if (a >= 0 && b >= 0 && a + b > 0) {
+        t = conf.p1 + ' ' + pct(a / (a + b)) + ' · ' + conf.p2 + ' ' + pct(b / (a + b)) + ' (total ' + money0(a + b) + ')';
+        if (s1 > 0 && s2 > 0) t += '. Pelo ordenado seria ' + money0((a + b) * s1 / (s1 + s2)) + ' e ' + money0((a + b) * s2 / (s1 + s2)) + '.';
+      }
+      live.textContent = t;
+    };
+    var one = {};
+    Calc.oneoffGroups(conf, B).forEach(function (g) { one[g] = 1; });
+    var chips = h('div', { class: 'chips', style: 'flex-wrap:wrap;overflow:visible;margin-top:2px' });
+    conf.groups.forEach(function (g) {
+      var b = h('button', { type: 'button', class: 'chip', 'aria-pressed': String(!!one[g]), text: g });
+      b.addEventListener('click', function () { one[g] = one[g] ? 0 : 1; b.setAttribute('aria-pressed', String(!!one[g])); });
+      chips.append(b);
+    });
+    var err = h('div', { class: 'err-inline', role: 'alert' });
+    var save = h('button', { type: 'button', class: 'primary', text: 'Guardar' });
+    card.append(
+      h('div', { class: 'hint', style: 'margin-top:0', text: 'Fica guardado na folha e os dois veem estes valores.' }),
+      h('div', { class: 'lbl', style: 'margin-top:14px', text: 'Ordenado líquido por mês' }), pair('sal1', 'sal2'),
+      h('div', { class: 'lbl', text: 'Quanto entra por mês na conta conjunta' }), pair('in1', 'in2'), live,
+      h('div', { class: 'lbl', text: 'Poupança por mês (fora da conta conjunta)' }), pair('sav1', 'sav2'),
+      h('div', { class: 'lbl', text: 'Saldo da conta conjunta' }),
+      h('div', { class: 'pair' }, fld('bal', 'Saldo'), h('div')),
+      h('div', { class: 'hint', text: B.balDate ? 'Atualizado a ' + fmtDate(B.balDate) + '. Atualiza de vez em quando, não é preciso todos os dias.' : 'Escreve o saldo que vês no banco. Atualiza de vez em quando.' }),
+      h('div', { class: 'lbl', text: 'Compras pontuais (não contam para o orçamento mensal)' }), chips,
+      h('div', { class: 'hint', text: 'Ex.: mobília e eletrodomésticos. Servem para ver só o gasto do dia a dia contra o orçamento.' }),
+      err, save);
+    ['in1', 'in2', 'sal1', 'sal2'].forEach(function (k) { inputs[k].addEventListener('input', upd); });
+    upd();
+    save.addEventListener('click', function () {
+      if (busy) return;
+      var out = {}, bad = '';
+      [['sal1', conf.p1 + ' (ordenado)'], ['sal2', conf.p2 + ' (ordenado)'], ['in1', conf.p1 + ' (entrada)'], ['in2', conf.p2 + ' (entrada)'], ['sav1', conf.p1 + ' (poupança)'], ['sav2', conf.p2 + ' (poupança)'], ['bal', 'saldo']].forEach(function (f) {
+        var t = inputs[f[0]].value.trim();
+        if (!t) { out[f[0]] = null; return; }
+        var n = parseNum(t);
+        if (!isFinite(n) || (n < 0 && f[0] !== 'bal')) { bad = bad || 'Valor inválido em ' + f[1] + '.'; return; }
+        out[f[0]] = Math.round(n * 100) / 100;
+      });
+      if (bad) { err.textContent = bad; return; }
+      err.textContent = '';
+      out.balDate = out.bal === null ? null : (out.bal !== B.bal || !B.balDate ? todayStr() : B.balDate);
+      out.oneoff = conf.groups.reduce(function (a, g, i) { return a + (one[g] ? Math.pow(2, i) : 0); }, 0);
+      busy = true; save.disabled = true;
+      call('setBudget', [out], function (r) { busy = false; save.disabled = false; applyData(r.data); toast('Guardado ✓'); }, function (e) {
+        busy = false; save.disabled = false;
+        if (e && /desconhecido/i.test(e.message || '')) toast('O servidor ainda não está na versão 4.', { err: true }); else handleErr(e);
+      });
+    });
+    return card;
+  }
+
   /* ====================== PAINEL ====================== */
 
   function periodName() {
@@ -707,6 +894,8 @@
         h('div', { class: 'kpi-l', text: 'Quem deve a quem' }),
         h('div', { class: 'kpi-v', text: s.quits ? 'Quites' : money(s.value) }),
         h('div', { class: 'kpi-s', text: s.quits ? 'nada para acertar' : s.text }))));
+    var bc = budgetCard();
+    if (bc) root.append(bc);
 
     /* --- quem pagou --- */
     var ps = Calc.payerSplit(list, conf);
@@ -899,27 +1088,29 @@
       h('div', { class: 'muted small', style: 'margin-top:10px', text: 'As despesas pagas pela conta conjunta não criam dívida entre vocês.' }));
     root.append(hero);
 
-    /* --- como se chega a este valor --- */
+    /* --- como se chega a este valor: frases simples; a tabela fica escondida --- */
     var R = s.rows;
     var line = function (label, arr, o) {
       o = o || {};
       return h('tr', { class: o.bold ? 'b' : '' }, h('td', { text: label }), h('td', { text: (o.sign || '') + money(arr[0]) }), h('td', { text: (o.sign || '') + money(arr[1]) }));
     };
+    var table = h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl fit' },
+      h('thead', null, h('tr', null, h('th', { scope: 'col', text: '' }), h('th', { scope: 'col', text: conf.p1 }), h('th', { scope: 'col', text: conf.p2 }))),
+      h('tbody', null,
+        line('Pagou do bolso', R.direct),
+        line('A sua parte da conta conjunta', R.jointShare),
+        line('Total que pagou', R.paid, { bold: true }),
+        line('Despesas só dele/dela', R.only),
+        line('A sua parte de tudo', R.part),
+        line('Diferença (pagou − parte)', R.diff, { bold: true }),
+        line('Transferências recebidas', R.recv, { sign: '− ' }),
+        line('Transferências enviadas', R.sent, { sign: '+ ' }),
+        line('Saldo (+ = tem a receber)', R.net, { bold: true }))));
     root.append(h('div', { class: 'card' },
-      cardHead('Como se chega a este valor', 'Tudo desde o início, já com as transferências'),
-      h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl fit' },
-        h('thead', null, h('tr', null, h('th', { scope: 'col', text: '' }), h('th', { scope: 'col', text: conf.p1 }), h('th', { scope: 'col', text: conf.p2 }))),
-        h('tbody', null,
-          line('Pagou do bolso', R.direct),
-          line('Pôs na conta conjunta', R.jointShare),
-          line('Total que pagou', R.paid, { bold: true }),
-          line('Despesas só dele/dela', R.only),
-          line('A sua parte de tudo', R.part),
-          line('Diferença (pagou − parte)', R.diff, { bold: true }),
-          line('Transferências recebidas', R.recv, { sign: '− ' }),
-          line('Transferências enviadas', R.sent, { sign: '+ ' }),
-          line('Saldo (+ = tem a receber)', R.net, { bold: true })))),
-      h('p', { class: 'hint', text: 'Despesas partilhadas pelos dois: ' + money(s.shared) + ' · a quota de ' + conf.p1 + ' é ' + pct(conf.pct1) + ' e a conta conjunta é financiada ' + pct(conf.fund1) + ' por ' + conf.p1 + ' (Config no Excel).' })));
+      cardHead('Porquê este valor?', 'Tudo desde o início'),
+      st.exp.length || st.tr.length ? debtStory(s) : h('div', { class: 'empty', text: 'Ainda sem despesas.' }),
+      h('details', null, h('summary', { text: 'Ver as contas por extenso' }), table,
+        h('p', { class: 'hint', text: 'Despesas partilhadas pelos dois: ' + money(s.shared) + '. Metade para cada um; a conta conjunta é dos dois.' }))));
 
     /* --- ver as despesas por trás --- */
     var rows = [
@@ -1107,6 +1298,8 @@
       shareErr,
       h('button', { type: 'button', class: 'ghost block', text: 'Atualizar dados agora', onclick: function () { refresh(true); } })));
 
+    root.append(budgetSettingsCard());
+
     /* aspeto */
     var themeCtl = segCtl('theme', ['Automático', 'Claro', 'Escuro'], { auto: 'Automático', light: 'Claro', dark: 'Escuro' }[ui.theme], function (v) {
       ui.theme = { 'Automático': 'auto', 'Claro': 'light', 'Escuro': 'dark' }[v]; lsSet(UIKEY, ui); applyUi(); renderAll();
@@ -1133,10 +1326,11 @@
     if (st.legacy) {
       srv.append(h('div', { class: 'muted', text: 'Para ter o painel, as dívidas e a edição: abre o Apps Script da folha, substitui o conteúdo de Código.gs pelo ficheiro novo, e em Implementar › Gerir implementações escolhe o lápis, «Nova versão» e Implementar. O endereço e o código mantêm-se e nenhum telemóvel precisa de ser ligado outra vez.' }));
     } else {
-      srv.append(h('div', { class: 'muted', text: 'Tudo certo: a app lê e escreve diretamente na folha de cálculo.' }));
+      srv.append(h('div', { class: 'muted', text: st.serverV < 4 ? 'Funciona, mas há uma versão mais nova (4) com orçamento e poupança. Para a ter, segue os passos do cartão «Orçamento e poupança».' : 'Tudo certo: a app lê e escreve diretamente na folha de cálculo.' }));
     }
     srv.append(confirmBtn('Desligar este telemóvel', 'Toca outra vez para confirmar', function () { showSetup('Telemóvel desligado.'); }, 'ghost block'));
     root.append(srv);
+    if (st.setFocus) { st.setFocus = ''; var bcEl = $('#budCard'); if (bcEl) setTimeout(function () { bcEl.scrollIntoView(); }, 0); }
   }
 
   function share(errEl) {

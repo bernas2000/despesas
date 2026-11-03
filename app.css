@@ -221,3 +221,36 @@ body.setup-mode #toast { bottom: 18px; }
 .sw[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--ink); }
 
 @media (prefers-reduced-motion: reduce) { .sheet .panel, .icon-btn.spin svg { animation: none; } #toast { transition: none; } }
+
+/* ---- dívidas: explicação em frases ---- */
+.story p { margin: 0 0 10px; line-height: 1.45; }
+.story p:last-child { margin-bottom: 4px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 17px; }
+.card details { margin-top: 6px; }
+
+/* ---- orçamento ---- */
+.bud-big { font-size: 20px; color: var(--muted); margin: 2px 0 0; }
+.bud-big b { font-size: 30px; font-weight: 800; color: var(--ink); letter-spacing: -.01em; }
+.meter { position: relative; height: 12px; border-radius: 6px; background: var(--wash); margin: 10px 0 12px; }
+.meter i { display: block; height: 100%; border-radius: 6px; min-width: 4px; }
+.meter s, .bm-track s { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink2); text-decoration: none; }
+.kpi-go.link { display: block; background: transparent; border: 0; padding: 8px 0 0; min-height: 40px; text-align: left; cursor: pointer; }
+.bm-list { margin-top: 2px; }
+.bm { display: grid; grid-template-columns: 52px 1fr 78px; gap: 10px; align-items: center; width: 100%; text-align: left; background: transparent; border: 0; border-top: 1px solid var(--line); padding: 8px 0; cursor: pointer; min-height: 46px; }
+.bm:first-child { border-top: 0; }
+.bm-l { font-weight: 600; font-size: 14px; white-space: nowrap; }
+.bm-v { text-align: right; font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bm-track { position: relative; display: block; height: 10px; }
+.bm-track i { display: block; height: 100%; border-radius: 0 4px 4px 0; min-width: 2px; }
+.kv-r { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.kv-r:first-child { border-top: 0; }
+.kv-l { display: block; font-weight: 600; }
+.kv-s { display: block; color: var(--muted); font-size: 13px; }
+.kv-r b { white-space: nowrap; text-align: right; }
+.legend-row.static { grid-template-columns: 12px 1fr auto; cursor: default; }
+
+/* ---- definições do orçamento ---- */
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.fld .fl { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.amt-sm { display: flex; align-items: center; gap: 6px; }
+.amt-sm input { text-align: right; font-weight: 700; min-height: 48px; }
+.amt-sm > span { color: var(--muted); font-weight: 700; }
