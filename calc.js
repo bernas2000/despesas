@@ -19,12 +19,30 @@
   // O Excel (SUMIFS) ignora maiúsculas/minúsculas; fazemos o mesmo.
   var same = function (a, b) { return !!b && String(a || '').toLowerCase() === String(b).toLowerCase(); };
 
-  /** Gasto pessoal: categoria pessoal e pago por uma das pessoas (sem pagador, conta como despesa da casa). */
-  function isPersonal(e, cfg) {
-    return !!(cfg && cfg.pcats && cfg.pcats.indexOf(e.c) >= 0 && (same(e.p, cfg.p1) || same(e.p, cfg.p2)));
+  /** De quem é um gasto pessoal: 1 ou 2 (0 = não é pessoal). O dono é quem aparece em «Só X»; sem isso, quem pagou.
+   *  Sem pagador (conta conjunta) conta como despesa da casa, para não desaparecer. */
+  function ownerOf(e, cfg) {
+    if (!cfg || !cfg.pcats || cfg.pcats.indexOf(e.c) < 0) return 0;
+    var payer = same(e.p, cfg.p1) ? 1 : same(e.p, cfg.p2) ? 2 : 0;
+    if (!payer) return 0;
+    if (same(e.x, cfg.splitP1)) return 1;
+    if (same(e.x, cfg.splitP2)) return 2;
+    return payer;
   }
+  function isPersonal(e, cfg) { return ownerOf(e, cfg) > 0; }
   function houseOf(list, cfg) { return cfg && cfg.pcats ? list.filter(function (e) { return !isPersonal(e, cfg); }) : list; }
-  function personalOf(list, cfg) { return cfg && cfg.pcats ? list.filter(function (e) { return isPersonal(e, cfg); }) : []; }
+  /** Gastos pessoais (de uma pessoa k, se indicada). */
+  function personalOf(list, cfg, k) {
+    return cfg && cfg.pcats ? list.filter(function (e) { var o = ownerOf(e, cfg); return o > 0 && (!k || o === k); }) : [];
+  }
+  /** O que conta para as dívidas: a casa + os gastos pessoais pagos pelo outro (o dono fica a dever). */
+  function debtOf(list, cfg) {
+    if (!cfg || !cfg.pcats) return list;
+    return list.filter(function (e) {
+      var o = ownerOf(e, cfg);
+      return o === 0 || o !== (same(e.p, cfg.p1) ? 1 : 2);
+    });
+  }
 
   /** Junta ano (y) e mês (m) a cada despesa. Linhas sem data ficam com y = 0 (só contam em «tudo»). */
   function prep(list) {
@@ -144,7 +162,7 @@
 
   /** Acerto de contas acumulado (todas as despesas e transferências). */
   function settle(exp, tr, cfg) {
-    exp = houseOf(exp, cfg);
+    exp = debtOf(exp, cfg);
     var total = sum(exp);
     var d1 = sum(exp.filter(function (e) { return same(e.p, cfg.p1); }));
     var d2 = sum(exp.filter(function (e) { return same(e.p, cfg.p2); }));
@@ -182,7 +200,7 @@
 
   /** Saldo de um mês (sem transferências), como a tabela «Mês a mês» do Excel. Positivo = pessoa 2 deve à pessoa 1. */
   function settleMonth(exp, cfg, year, m) {
-    var l = houseOf(exp, cfg).filter(function (e) { return e.y === year && e.m === m; });
+    var l = debtOf(exp, cfg).filter(function (e) { return e.y === year && e.m === m; });
     var total = sum(l);
     var d1 = sum(l.filter(function (e) { return same(e.p, cfg.p1); }));
     var d2 = sum(l.filter(function (e) { return same(e.p, cfg.p2); }));
@@ -315,7 +333,7 @@
     var contrib = typeof bud['in' + k] === 'number' ? bud['in' + k] : null;
     var oneoff = oneoffGroups(cfg, bud);
     var ty = +today.slice(0, 4), tm = +today.slice(5, 7), curKey = ty * 100 + tm;
-    var mine = personalOf(exp, cfg).filter(function (e) { return e.y && same(e.p, name); });
+    var mine = personalOf(exp, cfg, k).filter(function (e) { return e.y; });
     var house = houseOf(exp, cfg).filter(function (e) { return e.y && oneoff.indexOf(groupOf(cfg, e.c)) < 0; });
 
     var pers = {}, oop = {}, hmonth = {};
@@ -361,6 +379,6 @@
     avgPerMonth: avgPerMonth, monthsWithSpend: monthsWithSpend, groupOf: groupOf,
     byCategory: byCategory, byGroup: byGroup, byRoom: byRoom, series: series, catSeries: catSeries,
     payerSplit: payerSplit, settle: settle, settleMonth: settleMonth, oneoffGroups: oneoffGroups, budget: budget,
-    isPersonal: isPersonal, houseOf: houseOf, personalOf: personalOf, incomeOf: incomeOf, jointEstimate: jointEstimate, person: person
+    isPersonal: isPersonal, ownerOf: ownerOf, houseOf: houseOf, personalOf: personalOf, debtOf: debtOf, incomeOf: incomeOf, jointEstimate: jointEstimate, person: person
   };
 });

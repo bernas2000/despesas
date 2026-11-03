@@ -263,3 +263,18 @@ body.setup-mode #toast { bottom: 18px; }
 .brow .amt-sm { width: 140px; flex: none; }
 .brow .kv-l { font-weight: 600; }
 .card .mrow .small { font-size: 13px; }
+
+/* ---- versão simples: botões e letras maiores, menos coisas no ecrã ---- */
+.stepper { justify-content: space-between; padding: 6px; }
+.st-b { width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 28px; line-height: 1; cursor: pointer; padding: 0 0 4px; }
+.st-b:disabled { opacity: .35; cursor: default; }
+.st-b:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.st-l { font-size: 18px; font-weight: 800; text-align: center; flex: 1; }
+.lite-hero .big { font-size: 42px; font-weight: 800; letter-spacing: -.02em; margin: 4px 0 2px; }
+body.lite .seg span { min-height: 56px; font-size: 17px; }
+body.lite input[type="text"], body.lite input[type="search"], body.lite input[type="date"], body.lite select { min-height: 54px; font-size: 17px; }
+body.lite button.primary { min-height: 58px; font-size: 18px; }
+body.lite .ghost.block { min-height: 54px; font-size: 16px; }
+body.lite .mrow, body.lite .xrow, body.lite .rk { min-height: 64px; }
+body.lite .xt, body.lite .nm { font-size: 17px; }
+body.lite #nav button { font-size: 13px; }
